@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>P2P Voice Quiz (Bugout)</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans JP",sans-serif;max-width:900px;margin:20px auto;padding:0 12px}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .card{border:1px solid #ddd;border-radius:10px;padding:12px;margin:10px 0}
+    button,input{font-size:16px;padding:8px 10px}
+    #log{white-space:pre-wrap;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px;min-height:120px}
+    .big{font-size:22px;font-weight:700}
+    .ok{color:#0a7}
+    .ng{color:#c33}
+  </style>
+
+  <!-- Bugout (P2P messaging over WebRTC/WebTorrent trackers) -->
+  <script src="https://chr15m.github.io/bugout/bugout.min.js"></script>
+  <!-- QR code -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<h1>P2P 早押し4択（音声→テキスト）</h1>
+
+<div class="card" id="modeCard"></div>
+
+<div class="card">
+  <div class="row">
+    <div><span class="big">接続:</span> <span id="status">未接続</span></div>
+    <div><span class="big">参加者数:</span> <span id="peers">0</span></div>
+  </div>
+</div>
+
+<div class="card" id="hostUI" style="display:none">
+  <h2>親機（出題者）</h2>
+  <div class="row">
+    <label>正解 (A/B/C/D):
+      <input id="answerKey" value="A" maxlength="1" style="width:60px;text-transform:uppercase" />
+    </label>
+    <button id="startRound">ラウンド開始</button>
+    <button id="resetRound">リセット</button>
+  </div>
+
+  <p>このQRを参加者に読ませてください:</p>
+  <div id="qrcode"></div>
+  <p>接続キー（server address）: <code id="serverAddr"></code></p>
+
+  <h3>判定</h3>
+  <div id="result" class="big">-</div>
+</div>
+
+<div class="card" id="playerUI" style="display:none">
+  <h2>子機（回答者）</h2>
+  <div class="row">
+    <button id="micPerm">マイク許可</button>
+    <button id="speak" disabled>答えを言う（A/B/C/D）</button>
+  </div>
+  <p>最後に送った回答: <span id="lastSent">-</span></p>
+</div>
+
+<div class="card">
+  <h3>ログ</h3>
+  <div id="log"></div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const log = (s) => { $("log").textContent += s + "\n"; $("log").scrollTop = $("log").scrollHeight; };
+
+  const params = new URLSearchParams(location.search);
+  const role = (params.get("role") || "host").toLowerCase();
+  const server = params.get("server");
+
+  $("modeCard").innerHTML = `<div class="big">モード: ${role === "host" ? "親機" : "子機"}</div>`;
+
+  // --- Bugout setup ---
+  let b;
+  if (role === "host") {
+    // できれば同じアドレスを維持（リロードしてもQRが変わりにくい）
+    const seedKey = "p2p-quiz-host-seed";
+    const seed = localStorage.getItem(seedKey) || undefined;
+    b = seed ? new Bugout({seed}) : new Bugout();
+    if (!seed) localStorage.setItem(seedKey, b.seed);
+  } else {
+    if (!server) {
+      alert("playerモードには ?server=... が必要です（QRから開いてください）");
+      return;
+    }
+    b = new Bugout(server);
+  }
+
+  let peerCount = 0;
+  const setStatus = (s) => $("status").textContent = s;
+
+  b.on("seen", (addr) => {
+    // seenは重複もあるので雑にカウントしない（本格運用ならsetで管理）
+    log(`[seen] ${addr}`);
+  });
+
+  b.on("server", (addr) => {
+    // player側で「serverが見えた」
+    setStatus("接続OK");
+    log(`[server] connected to ${addr}`);
+  });
+
+  // 受信
+  b.on("message", (from, message) => {
+    try {
+      if (typeof message === "string") message = JSON.parse(message);
+    } catch {}
+    handleMessage(from, message);
+  });
+
+  function broadcast(obj) {
+    b.send(obj); // broadcast
+  }
+
+  // --- quiz state (host authoritative) ---
+  let currentRoundId = null;
+  let locked = false;
+
+  function newRoundId() {
+    return Math.random().toString(36).slice(2, 10);
+  }
+
+  function normalizeChoice(text) {
+    if (!text) return null;
+    const t = String(text).trim().toUpperCase();
+
+    // ざっくり同義語（日本語発話のありがちな認識）
+    const map = new Map([
+      ["A","A"], ["エー","A"], ["えー","A"], ["エイ","A"], ["えい","A"], ["1","A"], ["１","A"], ["いち","A"], ["一","A"],
+      ["B","B"], ["ビー","B"], ["びー","B"], ["2","B"], ["２","B"], ["に","B"], ["二","B"],
+      ["C","C"], ["シー","C"], ["しー","C"], ["3","C"], ["３","C"], ["さん","C"], ["三","C"],
+      ["D","D"], ["ディー","D"], ["でぃー","D"], ["4","D"], ["４","D"], ["よん","D"], ["四","D"]
+    ]);
+    // 先頭1文字だけで判定してしまう（“Aです”みたいなのも拾う）
+    const head = t[0];
+    if (["A","B","C","D"].includes(head)) return head;
+
+    // 完全一致優先
+    if (map.has(t)) return map.get(t);
+
+    // 含まれてたら拾う（例: "A です"）
+    for (const [k,v] of map.entries()) {
+      if (t.includes(k)) return v;
+    }
+    return null;
+  }
+
+  function handleMessage(from, msg) {
+    if (!msg || typeof msg !== "object") {
+      log(`[msg] ${from}: ${String(msg)}`);
+      return;
+    }
+    if (msg.type === "hello") {
+      log(`[hello] ${from} name=${msg.name || "-"}`);
+      return;
+    }
+
+    if (role === "host") {
+      if (msg.type === "answer") {
+        if (!currentRoundId || msg.roundId !== currentRoundId) {
+          log(`[late/other round] ${from}: ${JSON.stringify(msg)}`);
+          return;
+        }
+        if (locked) return;
+
+        locked = true; // 先着でロック（必要なら“最初の正解者”に変更可）
+        const key = ($("answerKey").value || "A").trim().toUpperCase();
+        const choice = normalizeChoice(msg.choice || msg.raw);
+        const ok = (choice === key);
+
+        $("result").innerHTML =
+          `勝者: <code>${from.slice(0,8)}</code> / 回答: <b>${choice || "?"}</b> ` +
+          (ok ? `<span class="ok">正解</span>` : `<span class="ng">不正解（正解: ${key}）</span>`);
+
+        log(`[WIN] from=${from} raw=${msg.raw} choice=${choice} key=${key}`);
+        broadcast({type:"roundResult", roundId: currentRoundId, winner: from, choice, correct: ok, key});
+      }
+    } else {
+      // player
+      if (msg.type === "round") {
+        currentRoundId = msg.roundId;
+        locked = false;
+        log(`[round] start id=${currentRoundId}`);
+        $("speak").disabled = false;
+      }
+      if (msg.type === "roundResult") {
+        if (msg.roundId !== currentRoundId) return;
+        log(`[result] winner=${(msg.winner||"").slice(0,8)} choice=${msg.choice} correct=${msg.correct}`);
+        $("speak").disabled = true;
+      }
+    }
+  }
+
+  // --- UI per role ---
+  if (role === "host") {
+    $("hostUI").style.display = "block";
+    setStatus("待機中（QR配布してください）");
+    const addr = b.address(); // hostの公開鍵ハッシュ
+    $("serverAddr").textContent = addr;
+
+    // QR: 同じHTMLに player&server を付ける
+    const url = new URL(location.href);
+    url.searchParams.set("role", "player");
+    url.searchParams.set("server", addr);
+
+    new QRCode(document.getElementById("qrcode"), {
+      text: url.toString(),
+      width: 220,
+      height: 220
+    });
+
+    $("startRound").onclick = () => {
+      currentRoundId = newRoundId();
+      locked = false;
+      $("result").textContent = "-";
+      const key = ($("answerKey").value || "A").trim().toUpperCase();
+      log(`\n[ROUND START] id=${currentRoundId} key=${key}`);
+      broadcast({type:"round", roundId: currentRoundId, startedAt: Date.now()});
+    };
+
+    $("resetRound").onclick = () => {
+      currentRoundId = null;
+      locked = false;
+      $("result").textContent = "-";
+      log(`[RESET]`);
+      broadcast({type:"reset"});
+    };
+
+  } else {
+    $("playerUI").style.display = "block";
+    setStatus("接続中（server発見待ち…）");
+
+    // 参加者名（任意）
+    const name = "P" + Math.random().toString(36).slice(2, 6);
+    b.send({type:"hello", name});
+
+    // --- SpeechRecognition ---
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognizer = null;
+
+    function ensureRecognizer() {
+      if (!SR) {
+        alert("このブラウザは Web Speech API の音声認識に非対応です（Android Chrome推奨）。");
+        return null;
+      }
+      const r = new SR();
+      r.lang = "ja-JP";
+      r.continuous = false;
+      r.interimResults = false;
+      r.maxAlternatives = 1;
+      return r;
+    }
+
+    $("micPerm").onclick = async () => {
+      try {
+        // 権限ダイアログを確実に出すために getUserMedia を叩く
+        await navigator.mediaDevices.getUserMedia({audio:true});
+        log("[mic] permission ok");
+        recognizer = ensureRecognizer();
+      } catch (e) {
+        alert("マイク許可が必要です: " + e);
+      }
+    };
+
+    $("speak").onclick = () => {
+      if (!recognizer) recognizer = ensureRecognizer();
+      if (!recognizer) return;
+      if (!currentRoundId) { alert("ラウンド開始を待ってください"); return; }
+
+      $("speak").disabled = true;
+      log("[stt] listening...（A/B/C/D を発話）");
+
+      recognizer.onresult = (ev) => {
+        const raw = ev.results?.[0]?.[0]?.transcript || "";
+        const choice = normalizeChoice(raw);
+        $("lastSent").textContent = `${raw} → ${choice || "?"}`;
+
+        b.send({type:"answer", roundId: currentRoundId, raw, choice, sentAt: Date.now()});
+        log(`[send] raw="${raw}" choice=${choice}`);
+        $("speak").disabled = false;
+      };
+      recognizer.onerror = (ev) => {
+        log("[stt] error: " + (ev.error || "unknown"));
+        $("speak").disabled = false;
+      };
+      recognizer.onend = () => {
+        // 終了しても結果が来ないケースがあるので保険
+        $("speak").disabled = false;
+      };
+
+      recognizer.start();
+    };
+  }
+
+  // 参加者数っぽい表示（Bugoutは厳密なpeer数APIが一定でないので簡易）
+  // seenが来たら+1、とかは重複があるのでここでは省略。
+  $("peers").textContent = "(簡易表示)";
+})();
+</script>
+</body>
+</html>
