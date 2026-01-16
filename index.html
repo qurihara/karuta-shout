@@ -18,7 +18,10 @@ button,input,select{font-size:16px;padding:8px 10px}
 .choiceBtn{font-size:18px;font-weight:700;border-radius:10px}
 .big{font-size:20px;font-weight:700}
 .muted{opacity:.7}
-#log{white-space:pre-wrap;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px;min-height:150px}
+#log{
+  white-space:pre-wrap;background:#fafafa;border:1px solid #eee;border-radius:10px;
+  padding:10px;min-height:150px;max-height:320px;overflow:auto
+}
 .ok{color:#0a7}
 .ng{color:#c33}
 </style>
@@ -132,125 +135,278 @@ button,input,select{font-size:16px;padding:8px 10px}
 
 <script>
 (() => {
-const $ = id => document.getElementById(id);
-const log = s => { $("log").textContent += s + "\n"; };
+  const $ = id => document.getElementById(id);
 
-const params = new URLSearchParams(location.search);
-const role = (params.get("role") || "host").toLowerCase();
-const hostId = params.get("host");
+  // ログ：スクロールしつつ確実に表示
+  const log = (s) => {
+    const el = $("log");
+    el.textContent += s + "\n";
+    el.scrollTop = el.scrollHeight;
+  };
 
-$("modeCard").innerHTML = `<b>モード:</b> ${role}`;
+  const params = new URLSearchParams(location.search);
+  const role = (params.get("role") || "host").toLowerCase();
+  const hostId = params.get("host");
 
-function normalizeChoice(text){
-  if(!text) return null;
-  const t = text.replace(/\s+/g,"").replace(/[、。]/g,"");
-  const list = [
-    "わがい","わがそ","わすら","わすれ",
-    "わたのはらこ","わたのはらや","わび"
-  ];
-  return list.find(k => t.startsWith(k)) || null;
-}
+  $("modeCard").innerHTML = `<b>モード:</b> ${role}`;
+  log(`[init] role=${role} hostId=${hostId || "-"}`);
 
-const peer = new Peer();
-const conns = new Map();
+  function normalizeChoice(text){
+    if(!text) return null;
+    const t = String(text).replace(/\s+/g,"").replace(/[、。．，]/g,"");
+    const list = [
+      "わがい","わがそ","わすら","わすれ",
+      "わたのはらこ","わたのはらや","わび"
+    ];
+    return list.find(k => t.startsWith(k)) || null;
+  }
 
-peer.on("open", id => {
-  $("selfId").textContent = id.slice(0,12);
-  $("status").textContent = "接続OK";
+  const peer = new Peer();
+  const conns = new Map();
 
-  if(role==="host"){
-    $("hostUI").style.display="block";
-    $("startRound").disabled=false;
-    $("resetRound").disabled=false;
+  // クイズ状態（host側で使用）
+  let roundOpen = false;
+  let key = null;
+  let winner = null;
 
-    const url = new URL(location.href);
-    url.searchParams.set("role","player");
-    url.searchParams.set("host",id);
+  function broadcast(obj){
+    conns.forEach(c => { if(c.open) c.send(obj); });
+  }
 
-    $("joinLink").href = url;
-    $("joinLink").textContent = url;
+  // 子機：回答UIだけ enable/disable（他のボタンまで殺さない）
+  function setAnswerEnabled(enabled){
+    const ids = ["speak","sendDict","dictInput"];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !enabled;
+    });
+    document.querySelectorAll(".choiceBtn").forEach(btn => btn.disabled = !enabled);
+  }
 
-    new QRCode($("qrcode"),{text:url.toString(),width:200,height:200});
+  peer.on("open", id => {
+    $("selfId").textContent = id.slice(0,12);
+    $("status").textContent = "接続OK";
+    log(`[peer] open id=${id}`);
 
-    peer.on("connection", c=>{
-      conns.set(c.peer,c);
-      $("peerCount").textContent = conns.size;
+    if(role==="host"){
+      $("hostUI").style.display="block";
+      $("startRound").disabled=false;
+      $("resetRound").disabled=false;
+
+      const url = new URL(location.href);
+      url.searchParams.set("role","player");
+      url.searchParams.set("host",id);
+
+      $("joinLink").href = url.toString();
+      $("joinLink").textContent = url.toString();
+
+      // QRを再生成（念のためクリア）
+      $("qrcode").innerHTML = "";
+      new QRCode($("qrcode"),{text:url.toString(),width:200,height:200});
+
+      log(`[host] join url = ${url.toString()}`);
+
+      peer.on("connection", c=>{
+        conns.set(c.peer,c);
+        $("peerCount").textContent = conns.size;
+        log(`[host] connected: peer=${c.peer}`);
+
+        c.on("close", () => {
+          conns.delete(c.peer);
+          $("peerCount").textContent = conns.size;
+          log(`[host] disconnected: peer=${c.peer}`);
+        });
+
+        c.on("data", msg=>{
+          // 受信ログを必ず出す（デバッグ用）
+          try {
+            log(`[host] recv from=${String(c.peer).slice(0,12)} ${JSON.stringify(msg)}`);
+          } catch {
+            log(`[host] recv from=${String(c.peer).slice(0,12)} (non-json)`);
+          }
+
+          if(msg && msg.type==="answer"){
+            if(!roundOpen) {
+              log(`[host] ignore answer (round closed)`);
+              return;
+            }
+
+            const raw = msg.raw ?? "";
+            const norm = msg.norm ?? normalizeChoice(raw);
+            const ok = (norm === key);
+
+            // 判定方式
+            const judgeMode = $("judgeMode").value;
+
+            if (judgeMode === "firstMessage") {
+              if (winner) return; // 最初に届いた回答でロック
+              winner = c.peer;
+              $("result").innerHTML =
+                `<span class="ok">勝者:</span> ${norm ?? "（不一致）"} / raw=${raw} / 正解=${key}`;
+              roundOpen = false;
+              broadcast({type:"roundResult", winner, norm, raw, correct: ok, key});
+              return;
+            }
+
+            // firstCorrect（デフォルト）
+            if (judgeMode === "firstCorrect") {
+              if (!ok) {
+                log(`[host] not correct: norm=${norm ?? "(no match)"} key=${key}`);
+                return;
+              }
+              if (winner) return;
+              winner = c.peer;
+              $("result").innerHTML =
+                `<span class="ok">勝者:</span> ${norm} / raw=${raw}`;
+              roundOpen = false;
+              broadcast({type:"roundResult", winner, norm, raw, correct: true, key});
+              return;
+            }
+          }
+        });
+      });
+
+    } else {
+      // player
+      $("playerUI").style.display="block";
+
+      if (!hostId) {
+        $("status").textContent = "エラー";
+        log("[player] missing host id (open from QR)");
+        alert("hostパラメータがありません。親機のQRから開いてください。");
+        return;
+      }
+
+      $("status").textContent="親機へ接続中...";
+      const c = peer.connect(hostId);
+
+      c.on("open",()=>{
+        $("status").textContent="親機接続OK";
+        log(`[player] connected to host=${hostId}`);
+      });
+
+      c.on("close",()=>{
+        $("status").textContent="切断";
+        log("[player] disconnected");
+        setAnswerEnabled(false);
+      });
 
       c.on("data", msg=>{
-        if(msg.type==="answer"){
-          if(!roundOpen) return;
-          const choice = normalizeChoice(msg.raw);
-          if(choice===key && !winner){
-            winner=c.peer;
-            $("result").innerHTML =
-              `<span class="ok">勝者:</span> ${choice}`;
-            broadcast({type:"roundResult"});
-          }
+        try {
+          log(`[player] recv ${JSON.stringify(msg)}`);
+        } catch {
+          log(`[player] recv (non-json)`);
+        }
+
+        if(msg && msg.type==="round"){
+          setAnswerEnabled(true);
+          log("[player] round start: answering enabled");
+        }
+        if(msg && msg.type==="roundResult"){
+          setAnswerEnabled(false);
+          log("[player] round end: answering disabled");
         }
       });
-    });
-  } else {
-    $("playerUI").style.display="block";
-    const c = peer.connect(hostId);
-    c.on("open",()=>{$("status").textContent="親機接続OK";});
-    c.on("data", msg=>{
-      if(msg.type==="round"){enableAnswer(true);}
-      if(msg.type==="roundResult"){enableAnswer(false);}
-    });
 
-    function send(raw){
-      c.send({type:"answer",raw});
+      // 送信：raw と norm を必ずログ＆送信（マッチしなくても）
+      function send(raw){
+        const norm = normalizeChoice(raw);
+        log(`[player] send raw="${raw}" norm=${norm ?? "(no match)"}`);
+        c.send({type:"answer", raw, norm});
+        // UIにも表示
+        if ($("lastSent")) $("lastSent").textContent = `${raw} → ${norm ?? "×"}`;
+        if ($("lastSent2")) $("lastSent2").textContent = `${raw} → ${norm ?? "×"}`;
+      }
+
+      const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+      const isiPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
+
+      $("compatMsg").textContent =
+        isiPhone ? "iPhone: 🎤音声入力（キーボード） or ボタン" :
+        (SR ? "音声認識対応（SpeechRecognitionあり）" : "音声認識非対応：入力 or ボタン");
+
+      $("srBlock").style.display = (!isiPhone && SR) ? "block" : "none";
+      $("iosBlock").style.display = (isiPhone || !SR) ? "block" : "none";
+
+      // iOS dictation
+      $("sendDict").onclick = () => {
+        const v = $("dictInput").value || "";
+        send(v);
+      };
+
+      // SpeechRecognition（開始/終了/エラーもログ）
+      $("micPerm").onclick = async () => {
+        try {
+          await navigator.mediaDevices.getUserMedia({audio:true});
+          log("[player] mic permission OK");
+        } catch (e) {
+          log("[player] mic permission ERROR: " + e);
+          alert("マイク許可が必要です: " + e);
+        }
+      };
+
+      $("speak").onclick = ()=>{
+        if(!SR){
+          log("[player] SpeechRecognition not supported");
+          return;
+        }
+        const r = new SR();
+        r.lang="ja-JP";
+
+        log("[player] STT start...");
+        r.onresult = e => {
+          const raw = e.results?.[0]?.[0]?.transcript ?? "";
+          log(`[player] STT result raw="${raw}"`);
+          send(raw);
+        };
+        r.onerror = e => {
+          log(`[player] STT error: ${e.error || "unknown"}`);
+        };
+        r.onend = () => {
+          log("[player] STT end");
+        };
+
+        try { r.start(); }
+        catch (err) { log("[player] STT start exception: " + err); }
+      };
+
+      // fallback buttons
+      document.querySelectorAll(".choiceBtn").forEach(b=>{
+        b.onclick = () => send(b.dataset.choice);
+      });
+
+      // 初期は回答無効
+      setAnswerEnabled(false);
     }
-
-    const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
-    const isiPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
-
-    $("compatMsg").textContent =
-      isiPhone ? "iPhone: 🎤音声入力 or ボタン" : "音声認識対応";
-
-    $("srBlock").style.display = (!isiPhone && SR)?"block":"none";
-    $("iosBlock").style.display = (isiPhone||!SR)?"block":"none";
-
-    $("sendDict").onclick=()=>send($("dictInput").value);
-    $("speak").onclick=()=>{
-      const r=new SR();
-      r.lang="ja-JP";
-      r.onresult=e=>send(e.results[0][0].transcript);
-      r.start();
-    };
-
-    document.querySelectorAll(".choiceBtn").forEach(b=>{
-      b.onclick=()=>send(b.dataset.choice);
-    });
-  }
-});
-
-let roundOpen=false;
-let key=null;
-let winner=null;
-
-function broadcast(obj){
-  conns.forEach(c=>c.open&&c.send(obj));
-}
-
-function enableAnswer(f){
-  document.querySelectorAll("button,input").forEach(e=>{
-    if(e.id!=="micPerm") e.disabled=!f;
   });
-}
 
-$("startRound").onclick=()=>{
-  roundOpen=true; winner=null;
-  key=$("answerKey").value;
-  $("result").textContent="-";
-  broadcast({type:"round"});
-};
+  peer.on("error", (err) => {
+    $("status").textContent = "エラー";
+    log("[peer] error: " + (err && err.type ? err.type : "") + " " + (err && err.message ? err.message : String(err)));
+  });
 
-$("resetRound").onclick=()=>{
-  roundOpen=false; winner=null;
-  $("result").textContent="-";
-  broadcast({type:"roundResult"});
-};
+  // host buttons (host only, but safe to bind)
+  $("startRound").onclick=()=>{
+    if (role !== "host") return;
+
+    roundOpen = true;
+    winner = null;
+    key = $("answerKey").value;
+
+    $("result").textContent="-";
+    log(`[host] ROUND START key=${key}`);
+    broadcast({type:"round"});
+  };
+
+  $("resetRound").onclick=()=>{
+    if (role !== "host") return;
+
+    roundOpen = false;
+    winner = null;
+    $("result").textContent="-";
+    log("[host] RESET");
+    broadcast({type:"roundResult"}); // とりあえず停止通知（必要ならtype:"reset"にしてもOK）
+  };
 })();
 </script>
 </body>
