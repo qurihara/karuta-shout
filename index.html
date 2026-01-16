@@ -63,16 +63,23 @@
       <label class="muted">判定方式:
         <select id="judgeMode">
           <option value="firstMessage" selected>先着（最初に届いた回答）</option>
-          <option value="firstCorrect">最初の正解者（不正解はスキップ）</option>
+        <option value="firstCorrect" selected>最初の正解者（不正解はスキップ）</option>
         </select>
       </label>
     </div>
 
     <div style="margin-top:10px">
-      <div class="big">参加用QR</div>
-      <div id="qrcode"></div>
-      <div class="muted" style="margin-top:8px">親機ID: <code id="hostId">-</code></div>
-    </div>
+        <div class="big">参加用QR</div>
+        <div id="qrcode"></div>
+        <div style="margin-top:8px">
+            <a id="joinLink" href="#" target="_blank" style="word-break:break-all">
+                参加リンクを開く
+            </a>
+        </div>
+  <div class="muted" style="margin-top:6px">
+    親機ID: <code id="hostId">-</code>
+  </div>
+</div>
 
     <div style="margin-top:10px">
       <div class="big">結果</div>
@@ -245,6 +252,11 @@
 
       $("qrcode").innerHTML = "";
       new QRCode($("qrcode"), { text: url.toString(), width: 220, height: 220 });
+
+      const joinLink = $("joinLink");
+      joinLink.href = url.toString();
+      joinLink.textContent = url.toString();
+
 
       $("startRound").onclick = () => openRound();
       $("resetRound").onclick = () => {
