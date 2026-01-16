@@ -50,29 +50,20 @@ button,input,select{font-size:16px;padding:8px 10px}
   <h2>親機（出題者）</h2>
 
   <div class="row">
-    <label>正解：
-      <select id="answerKey">
-        <option value="わがい">わがい</option>
-        <option value="わがそ">わがそ</option>
-        <option value="わすら">わすら</option>
-        <option value="わすれ">わすれ</option>
-        <option value="わたのはらこ">わたのはらこ</option>
-        <option value="わたのはらや">わたのはらや</option>
-        <option value="わび">わび</option>
-      </select>
-    </label>
-
-    <button id="startRound" disabled>ラウンド開始</button>
-    <button id="resetRound" disabled>リセット</button>
+    <button id="startGame" disabled>ゲーム開始</button>
+    <button id="nextRound" disabled style="display:none">次の問題へ</button>
+    <button id="skipRound" disabled style="display:none">この問題をスキップ</button>
   </div>
-
   <div class="row" style="margin-top:6px">
-    <label>判定方式：
-      <select id="judgeMode">
-        <option value="firstMessage">先着（最初に届いた回答）</option>
-        <option value="firstCorrect" selected>最初の正解者</option>
-      </select>
-    </label>
+    <div>問題: <span id="questionNum">-</span> / 100</div>
+    <div>現在の状態: <b id="roundStatus">待機中</b></div>
+  </div>
+  <div style="margin-top:6px">正解の決まり字: <span id="currentAnswer">-</span></div>
+
+
+  <div style="margin-top:10px">
+    <div class="big">スコアボード</div>
+    <div id="scoreboard"></div>
   </div>
 
   <div style="margin-top:10px">
@@ -94,38 +85,15 @@ button,input,select{font-size:16px;padding:8px 10px}
   <h2>子機（回答者）</h2>
   <div id="compatMsg" class="muted"></div>
 
-  <!-- SpeechRecognition -->
-  <div id="srBlock" style="display:none;margin-top:8px">
+  <div id="answerBlock" style="margin-top:8px">
     <div class="row">
-      <button id="micPerm">マイク許可</button>
-      <button id="speak" disabled>「わ」で始まる句を言う</button>
+      <input id="textInput" placeholder="回答を入力してEnter" style="flex:1" disabled>
+      <button id="speak" disabled>音声で回答</button>
     </div>
-    <div class="muted">Android / PC Chrome向け</div>
+    <div class="muted">PC/Androidは音声認識、iPhoneはテキスト入力が推奨です。</div>
     <div>送信: <span id="lastSent">-</span></div>
   </div>
-
-  <!-- iOS dictation -->
-  <div id="iosBlock" style="display:none;margin-top:8px">
-    <div class="muted">iPhone: 入力欄→🎤で音声入力</div>
-    <div class="row">
-      <input id="dictInput" placeholder="例：わたのはらや" style="flex:1">
-      <button id="sendDict" disabled>送信</button>
-    </div>
-    <div>送信: <span id="lastSent2">-</span></div>
-  </div>
-
-  <!-- fallback buttons -->
-  <div style="margin-top:10px">
-    <div class="row">
-      <button class="choiceBtn" data-choice="わがい" disabled>わがい</button>
-      <button class="choiceBtn" data-choice="わがそ" disabled>わがそ</button>
-      <button class="choiceBtn" data-choice="わすら" disabled>わすら</button>
-      <button class="choiceBtn" data-choice="わすれ" disabled>わすれ</button>
-      <button class="choiceBtn" data-choice="わたのはらこ" disabled>わたのはらこ</button>
-      <button class="choiceBtn" data-choice="わたのはらや" disabled>わたのはらや</button>
-      <button class="choiceBtn" data-choice="わび" disabled>わび</button>
-    </div>
-  </div>
+  <button id="micPerm" style="display:none">マイク許可</button>
 </div>
 
 <div class="card">
@@ -135,9 +103,22 @@ button,input,select{font-size:16px;padding:8px 10px}
 
 <script>
 (() => {
+  const kimarijiList = [
+    "", // index 0 は使わない
+    "あきの", "はるす", "あし", "たご", "おく", "かさ", "あまの", "わがゐ", "はなの", "これ",
+    "わたのはらや", "あまつ", "つく", "みち", "きみがためは", "たち", "ちは", "す", "なにわが", "わび",
+    "いまこ", "ふ", "つき", "この", "なにし", "おぐ", "みかの", "やまざ", "こころあ", "ありあ",
+    "あさぼらけあ", "やまが", "ひさ", "たれ", "ひとは", "なつ", "しら", "わすら", "あさじ", "しの",
+    "こい", "ちぎりき", "あい", "おおこ", "あはれ", "ゆら", "やえ", "かぜを", "みかき", "きみがためお",
+    "かく", "あけ", "なげき", "わすれ", "たき", "あらざ", "め", "ありま", "やす", "おおえ",
+    "いに", "よを", "いまは", "あさぼらけう", "うら", "もろ", "はるの", "こころに", "あらし", "さ",
+    "ゆう", "おと", "たか", "うか", "ちぎりお", "わたのはらこ", "せ", "あはじ", "あきか", "ながか",
+    "ほ", "おも", "よのなかよ", "ながら", "よも", "なげけ", "む", "なにわえ", "たま", "みせ",
+    "きり", "わがそ", "よのなかは", "みよ", "おおけ", "はなさ", "こぬ", "かぜそ", "ひとも", "もも"
+  ];
+
   const $ = id => document.getElementById(id);
 
-  // ログ：スクロールしつつ確実に表示
   const log = (s) => {
     const el = $("log");
     el.textContent += s + "\n";
@@ -151,39 +132,44 @@ button,input,select{font-size:16px;padding:8px 10px}
   $("modeCard").innerHTML = `<b>モード:</b> ${role}`;
   log(`[init] role=${role} hostId=${hostId || "-"}`);
 
-  // ★ 追加：勝者表示用の短縮ID
   function shortId(s){ return String(s||"").slice(0,8); }
 
   function normalizeChoice(text){
     if(!text) return null;
     const t = String(text).replace(/\s+/g,"").replace(/[、。．，]/g,"");
-    const list = [
-      "わがい","わがそ","わすら","わすれ",
-      "わたのはらこ","わたのはらや","わび"
-    ];
-    return list.find(k => t.startsWith(k)) || null;
+    // ★修正：完全一致で決まり字を判定
+    return kimarijiList.find(k => k === t) || null;
   }
 
   const peer = new Peer();
   const conns = new Map();
 
-  // クイズ状態（host側で使用）
+  // --- 親機側の状態管理 ---
+  let gameInProgress = false;
+  let questionIds = [];
+  let currentQuestionIndex = -1;
   let roundOpen = false;
+  let currentCardId = null;
   let key = null;
   let winner = null;
+  const scores = new Map();
 
   function broadcast(obj){
     conns.forEach(c => { if(c.open) c.send(obj); });
   }
 
-  // 子機：回答UIだけ enable/disable（他のボタンまで殺さない）
-  function setAnswerEnabled(enabled){
-    const ids = ["speak","sendDict","dictInput"];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = !enabled;
+  function updateScoreboard(){
+    let html = "";
+    scores.forEach((score, peerId) => {
+      html += `<div>${shortId(peerId)}: ${score}点</div>`;
     });
-    document.querySelectorAll(".choiceBtn").forEach(btn => btn.disabled = !enabled);
+    $("scoreboard").innerHTML = html;
+  }
+
+  // --- 子機側の状態管理 ---
+  function setAnswerEnabled(enabled){
+    $("textInput").disabled = !enabled;
+    $("speak").disabled = !enabled;
   }
 
   peer.on("open", id => {
@@ -192,98 +178,93 @@ button,input,select{font-size:16px;padding:8px 10px}
     log(`[peer] open id=${id}`);
 
     if(role==="host"){
+      // --- 親機の初期化 ---
       $("hostUI").style.display="block";
-      $("startRound").disabled=false;
-      $("resetRound").disabled=false;
+      $("startGame").disabled=false;
 
       const url = new URL(location.href);
       url.searchParams.set("role","player");
       url.searchParams.set("host",id);
-
       $("joinLink").href = url.toString();
       $("joinLink").textContent = url.toString();
-
-      // QRを再生成（念のためクリア）
       $("qrcode").innerHTML = "";
       new QRCode($("qrcode"),{text:url.toString(),width:200,height:200});
-
       log(`[host] join url = ${url.toString()}`);
 
       peer.on("connection", c=>{
         conns.set(c.peer,c);
+        scores.set(c.peer, 0);
         $("peerCount").textContent = conns.size;
+        updateScoreboard();
         log(`[host] connected: peer=${c.peer}`);
 
         c.on("close", () => {
           conns.delete(c.peer);
+          scores.delete(c.peer);
           $("peerCount").textContent = conns.size;
+          updateScoreboard();
           log(`[host] disconnected: peer=${c.peer}`);
         });
 
         c.on("data", msg=>{
-          // 受信ログを必ず出す（デバッグ用）
-          try {
-            log(`[host] recv from=${String(c.peer).slice(0,12)} ${JSON.stringify(msg)}`);
-          } catch {
-            log(`[host] recv from=${String(c.peer).slice(0,12)} (non-json)`);
-          }
-
+          log(`[host] recv from=${shortId(c.peer)} ${JSON.stringify(msg)}`);
           if(msg && msg.type==="answer"){
-            if(!roundOpen) {
-              log(`[host] ignore answer (round closed)`);
-              return;
-            }
+            if(!roundOpen) return;
 
             const raw = msg.raw ?? "";
-            const norm = msg.norm ?? normalizeChoice(raw);
+            const norm = normalizeChoice(raw);
             const ok = (norm === key);
 
-            // 判定方式
-            const judgeMode = $("judgeMode").value;
-
-            if (judgeMode === "firstMessage") {
-              if (winner) return; // 最初に届いた回答でロック
-              winner = c.peer;
-
-              // ★ 変更：勝者は送信者IDを表示し、回答は併記
-              $("result").innerHTML =
-                `<span class="ok">勝者:</span> ${shortId(c.peer)} / ` +
-                `回答: ${norm ?? "（不一致）"} / raw=${raw} / 正解=${key}`;
-
-              roundOpen = false;
-              broadcast({type:"roundResult", winner, norm, raw, correct: ok, key});
-              return;
-            }
-
-            // firstCorrect（デフォルト）
-            if (judgeMode === "firstCorrect") {
-              if (!ok) {
-                log(`[host] not correct: norm=${norm ?? "(no match)"} key=${key}`);
-                return;
-              }
+            if (ok) {
               if (winner) return;
               winner = c.peer;
-
-              // ★ 変更：勝者は送信者IDを表示し、回答は併記
-              $("result").innerHTML =
-                `<span class="ok">勝者:</span> ${shortId(c.peer)} / ` +
-                `回答: ${norm} / raw=${raw}`;
-
               roundOpen = false;
+
+              scores.set(c.peer, (scores.get(c.peer) || 0) + 1);
+              updateScoreboard();
+
+              $("result").innerHTML = `<span class="ok">勝者:</span> ${shortId(c.peer)} / 回答: ${norm}`;
+              $("roundStatus").textContent = "正解！";
+              log(`[host] Winner is ${shortId(c.peer)}`);
+
+              const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3,'0')}B.mp3`);
+              audioB.play();
+
               broadcast({type:"roundResult", winner, norm, raw, correct: true, key});
-              return;
+
+              if (currentQuestionIndex >= questionIds.length - 1) {
+                let finalResult = "<h2>ゲーム終了！</h2>";
+                let maxScore = -1;
+                let champions = [];
+                scores.forEach((score, peerId) => {
+                  finalResult += `<div>${shortId(peerId)}: ${score}点</div>`;
+                  if(score > maxScore){
+                    maxScore = score;
+                    champions = [peerId];
+                  } else if (score === maxScore){
+                    champions.push(peerId);
+                  }
+                });
+                finalResult += `<div class="big" style="margin-top:10px">優勝: ${champions.map(shortId).join(', ')}</div>`;
+                $("result").innerHTML = finalResult;
+                $("roundStatus").textContent = "ゲーム終了";
+                $("nextRound").style.display = "none";
+                $("skipRound").style.display = "none";
+                $("startGame").style.display = "inline-block";
+                gameInProgress = false;
+              } else {
+                $("nextRound").disabled = false;
+                $("skipRound").disabled = true;
+              }
             }
           }
         });
       });
 
     } else {
-      // player
+      // --- 子機の初期化 ---
       $("playerUI").style.display="block";
-
       if (!hostId) {
-        $("status").textContent = "エラー";
-        log("[player] missing host id (open from QR)");
         alert("hostパラメータがありません。親機のQRから開いてください。");
         return;
       }
@@ -291,134 +272,148 @@ button,input,select{font-size:16px;padding:8px 10px}
       $("status").textContent="親機へ接続中...";
       const c = peer.connect(hostId);
 
-      c.on("open",()=>{
+      c.on("open",()=> {
         $("status").textContent="親機接続OK";
         log(`[player] connected to host=${hostId}`);
       });
-
-      c.on("close",()=>{
+      c.on("close",()=> {
         $("status").textContent="切断";
-        log("[player] disconnected");
         setAnswerEnabled(false);
       });
-
       c.on("data", msg=>{
-        try {
-          log(`[player] recv ${JSON.stringify(msg)}`);
-        } catch {
-          log(`[player] recv (non-json)`);
-        }
-
+        log(`[player] recv ${JSON.stringify(msg)}`);
         if(msg && msg.type==="round"){
           setAnswerEnabled(true);
-          log("[player] round start: answering enabled");
+          $("textInput").focus();
         }
         if(msg && msg.type==="roundResult"){
           setAnswerEnabled(false);
-          log("[player] round end: answering disabled");
         }
       });
 
-      // 送信：raw と norm を必ずログ＆送信（マッチしなくても）
       function send(raw){
+        if(!c || !c.open) return;
         const norm = normalizeChoice(raw);
         log(`[player] send raw="${raw}" norm=${norm ?? "(no match)"}`);
         c.send({type:"answer", raw, norm});
-        // UIにも表示
-        if ($("lastSent")) $("lastSent").textContent = `${raw} → ${norm ?? "×"}`;
-        if ($("lastSent2")) $("lastSent2").textContent = `${raw} → ${norm ?? "×"}`;
+        $("lastSent").textContent = `${raw} → ${norm ?? "×"}`;
+        $("textInput").value = "";
       }
 
+      $("textInput").onkeydown = (e) => {
+        if (e.key === "Enter") send(e.target.value);
+      };
+
       const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
-      const isiPhone = /iPhone|iPad|iPod/.test(navigator.userAgent);
+      if (SR) {
+        $("micPerm").style.display = "inline-block";
+        $("speak").onclick = ()=>{
+          const r = new SR();
+          r.lang="ja-JP";
 
-      $("compatMsg").textContent =
-        isiPhone ? "iPhone: 🎤音声入力（キーボード） or ボタン" :
-        (SR ? "音声認識対応（SpeechRecognitionあり）" : "音声認識非対応：入力 or ボタン");
+          const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).join(' | ') + ' ;';
+          const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
+          speechRecognitionList.addFromString(grammar, 1);
+          r.grammars = speechRecognitionList;
 
-      $("srBlock").style.display = (!isiPhone && SR) ? "block" : "none";
-      $("iosBlock").style.display = (isiPhone || !SR) ? "block" : "none";
-
-      // iOS dictation
-      $("sendDict").onclick = () => {
-        const v = $("dictInput").value || "";
-        send(v);
-      };
-
-      // SpeechRecognition（開始/終了/エラーもログ）
-      $("micPerm").onclick = async () => {
-        try {
-          await navigator.mediaDevices.getUserMedia({audio:true});
-          log("[player] mic permission OK");
-        } catch (e) {
-          log("[player] mic permission ERROR: " + e);
-          alert("マイク許可が必要です: " + e);
-        }
-      };
-
-      $("speak").onclick = ()=>{
-        if(!SR){
-          log("[player] SpeechRecognition not supported");
-          return;
-        }
-        const r = new SR();
-        r.lang="ja-JP";
-
-        log("[player] STT start...");
-        r.onresult = e => {
-          const raw = e.results?.[0]?.[0]?.transcript ?? "";
-          log(`[player] STT result raw="${raw}"`);
-          send(raw);
+          log("[player] STT start...");
+          r.onresult = e => {
+            const raw = e.results?.[0]?.[0]?.transcript ?? "";
+            log(`[player] STT result raw="${raw}"`);
+            send(raw);
+          };
+          r.onerror = e => log(`[player] STT error: ${e.error || "unknown"}`);
+          r.onend = () => log("[player] STT end");
+          try { r.start(); } catch (err) { log("[player] STT start exception: " + err); }
         };
-        r.onerror = e => {
-          log(`[player] STT error: ${e.error || "unknown"}`);
+        $("micPerm").onclick = async () => {
+          try {
+            await navigator.mediaDevices.getUserMedia({audio:true});
+            log("[player] mic permission OK");
+            $("micPerm").style.display = "none";
+          } catch (e) {
+            alert("マイク許可が必要です: " + e);
+          }
         };
-        r.onend = () => {
-          log("[player] STT end");
-        };
-
-        try { r.start(); }
-        catch (err) { log("[player] STT start exception: " + err); }
-      };
-
-      // fallback buttons
-      document.querySelectorAll(".choiceBtn").forEach(b=>{
-        b.onclick = () => send(b.dataset.choice);
-      });
-
-      // 初期は回答無効
+      } else {
+        $("speak").style.display = "none";
+      }
       setAnswerEnabled(false);
     }
   });
 
   peer.on("error", (err) => {
     $("status").textContent = "エラー";
-    log("[peer] error: " + (err && err.type ? err.type : "") + " " + (err && err.message ? err.message : String(err)));
+    log("[peer] error: " + (err?.type || "") + " " + (err?.message || String(err)));
   });
 
-  // host buttons
-  $("startRound").onclick=()=>{
-    if (role !== "host") return;
+  // --- 親機のボタン処理 ---
+  $("startGame").onclick=()=>{
+    if (role !== "host" || gameInProgress) return;
+    gameInProgress = true;
 
-    roundOpen = true;
-    winner = null;
-    key = $("answerKey").value;
+    questionIds = Array.from({length: 100}, (_, i) => i + 1);
+    for (let i = questionIds.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [questionIds[i], questionIds[j]] = [questionIds[j], questionIds[i]];
+    }
+    log("[host] Game started, questions shuffled.");
+    currentQuestionIndex = -1;
+    scores.forEach((_, key) => scores.set(key, 0));
+    updateScoreboard();
 
-    $("result").textContent="-";
-    log(`[host] ROUND START key=${key}`);
-    broadcast({type:"round"});
+    $("startGame").style.display = "none";
+    $("nextRound").style.display = "inline-block";
+    $("skipRound").style.display = "inline-block";
+    
+    // 直接関数を呼び出して最初のラウンドを開始
+    startNewRound();
   };
 
-  $("resetRound").onclick=()=>{
+  function startNewRound(){
     if (role !== "host") return;
+    currentQuestionIndex++;
+    currentCardId = questionIds[currentQuestionIndex];
+    key = kimarijiList[currentCardId];
 
-    roundOpen = false;
-    winner = null;
+    $("questionNum").textContent = `${currentQuestionIndex + 1}`;
+    $("currentAnswer").textContent = key;
     $("result").textContent="-";
-    log("[host] RESET");
-    broadcast({type:"roundResult"}); // 停止通知（簡略）
+    $("nextRound").disabled = true;
+    $("skipRound").disabled = false;
+    $("roundStatus").textContent = "出題準備中...";
+    winner = null;
+
+    log(`[host] ROUND ${currentQuestionIndex + 1} START (ID: ${currentCardId}, Key: ${key})`);
+
+    setTimeout(() => {
+      roundOpen = true;
+      const audioA = new Audio(`./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`);
+      audioA.play();
+      broadcast({type:"round"});
+      $("roundStatus").textContent = "回答受付中";
+      log("[host] audio played, round opened");
+    }, 2000);
+  }
+
+  $("nextRound").onclick = startNewRound;
+  $("skipRound").onclick = () => {
+    if(role !== "host" || !gameInProgress || roundOpen === false) return;
+    log(`[host] Skipping question ${currentCardId}`);
+    roundOpen = false;
+    $("roundStatus").textContent = "スキップしました";
+    broadcast({type:"roundResult"}); // ラウンド終了を通知
+
+    if (currentQuestionIndex >= questionIds.length - 1) {
+      $("startGame").click();
+    } else {
+      // 次の問題へ移るボタンを有効化
+      $("nextRound").disabled = false;
+      $("skipRound").disabled = true;
+    }
   };
 })();
+</script>
 </script>
 </body>
 </html>
