@@ -151,6 +151,9 @@ button,input,select{font-size:16px;padding:8px 10px}
   $("modeCard").innerHTML = `<b>モード:</b> ${role}`;
   log(`[init] role=${role} hostId=${hostId || "-"}`);
 
+  // ★ 追加：勝者表示用の短縮ID
+  function shortId(s){ return String(s||"").slice(0,8); }
+
   function normalizeChoice(text){
     if(!text) return null;
     const t = String(text).replace(/\s+/g,"").replace(/[、。．，]/g,"");
@@ -241,8 +244,12 @@ button,input,select{font-size:16px;padding:8px 10px}
             if (judgeMode === "firstMessage") {
               if (winner) return; // 最初に届いた回答でロック
               winner = c.peer;
+
+              // ★ 変更：勝者は送信者IDを表示し、回答は併記
               $("result").innerHTML =
-                `<span class="ok">勝者:</span> ${norm ?? "（不一致）"} / raw=${raw} / 正解=${key}`;
+                `<span class="ok">勝者:</span> ${shortId(c.peer)} / ` +
+                `回答: ${norm ?? "（不一致）"} / raw=${raw} / 正解=${key}`;
+
               roundOpen = false;
               broadcast({type:"roundResult", winner, norm, raw, correct: ok, key});
               return;
@@ -256,8 +263,12 @@ button,input,select{font-size:16px;padding:8px 10px}
               }
               if (winner) return;
               winner = c.peer;
+
+              // ★ 変更：勝者は送信者IDを表示し、回答は併記
               $("result").innerHTML =
-                `<span class="ok">勝者:</span> ${norm} / raw=${raw}`;
+                `<span class="ok">勝者:</span> ${shortId(c.peer)} / ` +
+                `回答: ${norm} / raw=${raw}`;
+
               roundOpen = false;
               broadcast({type:"roundResult", winner, norm, raw, correct: true, key});
               return;
@@ -385,7 +396,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     log("[peer] error: " + (err && err.type ? err.type : "") + " " + (err && err.message ? err.message : String(err)));
   });
 
-  // host buttons (host only, but safe to bind)
+  // host buttons
   $("startRound").onclick=()=>{
     if (role !== "host") return;
 
@@ -405,7 +416,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     winner = null;
     $("result").textContent="-";
     log("[host] RESET");
-    broadcast({type:"roundResult"}); // とりあえず停止通知（必要ならtype:"reset"にしてもOK）
+    broadcast({type:"roundResult"}); // 停止通知（簡略）
   };
 })();
 </script>
