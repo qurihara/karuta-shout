@@ -57,10 +57,11 @@ button,input,select{font-size:16px;padding:8px 10px}
     <button id="skipRound" disabled style="display:none">この問題をスキップ</button>
   </div>
   <div class="row" style="margin-top:6px">
-    <div>問題: <span id="questionNum">-</span> / 100</div>
+    <div>問題: <span id="questionNum">-</span> / 100 (歌ID: <span id="cardIdSpan">-</span>)</div>
     <div>現在の状態: <b id="roundStatus">待機中</b></div>
   </div>
-  <div style="margin-top:6px">正解の決まり字: <span id="currentAnswer">-</span></div>
+  <div style="margin-top:6px">出題(上の句): <span id="currentQuestionKimariji">-</span></div>
+  <div style="margin-top:6px">正解(下の句): <span id="currentAnswer">-</span></div>
 
 
   <div style="margin-top:10px">
@@ -106,7 +107,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 
 <script>
 (() => {
-  const kimarijiList = [
+  const kamiKimarijiList = [
     "", // index 0 は使わない
     "あきの", "はるす", "あし", "たご", "おく", "かさ", "あまの", "わがゐ", "はなの", "これ",
     "わたのはらや", "あまつ", "つく", "みち", "きみがためは", "たち", "ちは", "す", "なにわが", "わび",
@@ -118,6 +119,19 @@ button,input,select{font-size:16px;padding:8px 10px}
     "ゆう", "おと", "たか", "うか", "ちぎりお", "わたのはらこ", "せ", "あはじ", "あきか", "ながか",
     "ほ", "おも", "よのなかよ", "ながら", "よも", "なげけ", "む", "なにわえ", "たま", "みせ",
     "きり", "わがそ", "よのなかは", "みよ", "おおけ", "はなさ", "こぬ", "かぜそ", "ひとも", "もも"
+  ];
+  const kimarijiList = [
+    "", // index 0 は使わない
+    "わがころもでは", "ころもほ", "ながな", "ふじ", "こえ", "しろ", "みか", "よをう", "わがみよ", "しる",
+    "ひとには", "おと", "こいぞ", "みだれそ", "わがころもでに", "まつと", "から", "ゆめ", "あわで", "みをつくしても",
+    "あり", "むべ", "わがみひ", "もみ", "ひとにし", "いまひとたびのみ", "いつ", "ひとめ", "おき", "あか",
+    "", "ながれ", "しず", "まつも", "はなぞ", "くもの", "つ", "ひとの", "あまり", "もの",
+    "ひとし", "す", "むか", "ひとを", "みの", "ゆく", "ひとこそみ", "くだ", "ひる", "ながく",
+    "さ", "なおう", "いか", "きょうを", "なこ", "いまひとたびのお", "くもが", "いで", "かた", "まだ",
+    "きょうこ", "よに", "ひとず", "あら", "こいに", "はなよ", "かい", "こいし", "たつ", "いず",
+    "あし", "かけ", "と", "はげ", "あわれ", "くもい", "われ", "いく", "もれ", "みだれて",
+    "ただ", "うき", "やま", "うし", "ね", "かこ", "きり", "ひとこそし", "あまの", "ふる",
+    "わがた", "ふり", "やく", "みそ", "よをお", "なおあ"
   ];
   // ★★★ gooラボのひらがな化APIを使用するために、ご自身のAPP IDを設定してください ★★★
   const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
@@ -422,8 +436,11 @@ button,input,select{font-size:16px;padding:8px 10px}
     currentQuestionIndex++;
     currentCardId = questionIds[currentQuestionIndex];
     key = kimarijiList[currentCardId];
+    const kamiKimariji = kamiKimarijiList[currentCardId];
 
     $("questionNum").textContent = `${currentQuestionIndex + 1}`;
+    $("cardIdSpan").textContent = currentCardId;
+    $("currentQuestionKimariji").textContent = kamiKimariji;
     $("currentAnswer").textContent = key;
     $("result").textContent="-";
     $("nextRound").disabled = true;
