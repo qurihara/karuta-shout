@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>叫ぶ百人一首 Karuta Shout</title>
+<title>叫ぶ！百人一首 Karuta Shout</title>
 
 <style>
 body{
@@ -35,7 +35,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 </head>
 
 <body>
-<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.7</h1>
+<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.9</h1>
 
 <div class="card" id="modeCard"></div>
 
@@ -194,6 +194,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       const ok = (norm === key);
 
       if (ok) {
+        new Audio('./se/Quiz-Ding_Dong02-2(Fast-Single).mp3').play();
         winner = peerId;
         roundOpen = false;
         scores.set(peerId, (scores.get(peerId) || 0) + 1);
@@ -226,7 +227,6 @@ button,input,select{font-size:16px;padding:8px 10px}
             $("result").innerHTML = finalResult;
             $("roundStatus").textContent = "ゲーム終了";
             $("nextRound").style.display = "none";
-            $("skipRound").style.display = "none";
             $("startGame").style.display = "inline-block";
             gameInProgress = false;
           };
@@ -238,6 +238,9 @@ button,input,select{font-size:16px;padding:8px 10px}
         }
         $("nextRound").disabled = true; // 自動進行中は手動操作不要
         audioB.play();
+      } else {
+        new Audio('./se/Quiz-Buzzer05-2(Short).mp3').play();
+        log(`[host] Incorrect answer from ${shortId(peerId)}: "${raw}"`);
       }
     } catch (error) {
       log(`[host] Error processing answer: ${error}`);
@@ -344,64 +347,48 @@ button,input,select{font-size:16px;padding:8px 10px}
         })
         .then(csv => {
           const lines = csv.trim().split('\n').slice(1);
-          // Playerは下の句リストのみ使用
           kimarijiList = ["", ...lines.map(l => l.split(',')[2] || "")];
           log('[player] Kimariji list loaded.');
 
-          $("status").textContent="親機へ接続中...";
-          const c = peer.connect(hostId);
+          let recognition = null;
+          let recognitionActive = false;
 
-          c.on("open",()=> {
-            $("status").textContent="親機接続OK";
-            log(`[player] connected to host=${hostId}`);
-          });
-          c.on("close",()=> {
-            $("status").textContent="切断";
-            setAnswerEnabled(false);
-          });
-          c.on("data", msg=>{
-            log(`[player] recv ${JSON.stringify(msg)}`);
-            if(msg && msg.type==="round"){
-              setAnswerEnabled(true);
-              $("textInput").focus();
-            }
-            if(msg && msg.type==="roundResult"){
-              setAnswerEnabled(false);
-            }
-          });
-
-          function send(raw){
-            if(!c || !c.open) return;
-            c.send({type:"answer", raw});
-            $("lastSent").textContent = raw;
-            $("textInput").value = "";
-          }
-
-          $("textInput").onkeydown = (e) => {
-            if (e.key === "Enter") send(e.target.value);
-          };
-
-          const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
+          const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
           if (SR) {
-            $("micPerm").style.display = "inline-block";
-            $("speak").onclick = ()=>{
-              const r = new SR();
-              r.lang="ja-JP";
+            recognition = new SR();
+            recognition.lang = "ja-JP";
+            recognition.continuous = false; // 一つの発話で停止
+            recognition.interimResults = false;
 
-              const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).filter(Boolean).join(' | ') + ' ;';
-              const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
-              speechRecognitionList.addFromString(grammar, 1);
-              r.grammars = speechRecognitionList;
+            const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).filter(Boolean).join(' | ') + ' ;';
+            const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
+            speechRecognitionList.addFromString(grammar, 1);
+            recognition.grammars = speechRecognitionList;
 
-              log("[player] STT start...");
-              r.onresult = e => {
-                const raw = e.results?.[0]?.[0]?.transcript ?? "";
+            recognition.onresult = e => {
+              const raw = e.results?.[e.results.length - 1]?.[0]?.transcript ?? "";
+              if (raw) {
                 log(`[player] STT result raw="${raw}"`);
                 send(raw);
-              };
-              r.onerror = e => log(`[player] STT error: ${e.error || "unknown"}`);
-              r.onend = () => log("[player] STT end");
-              try { r.start(); } catch (err) { log("[player] STT start exception: " + err); }
+              }
+            };
+            recognition.onerror = e => {
+              log(`[player] STT error: ${e.error || "unknown"}`);
+            };
+            recognition.onend = () => {
+              log("[player] STT end");
+              if (recognitionActive) {
+                log("[player] STT restarting...");
+                try { recognition.start(); } catch(e) { /* 既に開始されている場合のエラーは無視 */ }
+              }
+            };
+            
+            $("micPerm").style.display = "inline-block";
+            $("speak").onclick = () => {
+              if (recognition && !recognitionActive) {
+                recognitionActive = true;
+                try { recognition.start(); } catch(e) { log('[player] recognition.start failed: ' + e); }
+              }
             };
             $("micPerm").onclick = async () => {
               try {
@@ -415,6 +402,48 @@ button,input,select{font-size:16px;padding:8px 10px}
           } else {
             $("speak").style.display = "none";
           }
+
+          $("status").textContent="親機へ接続中...";
+          const c = peer.connect(hostId);
+
+          c.on("open",()=> {
+            $("status").textContent="親機接続OK";
+            log(`[player] connected to host=${hostId}`);
+          });
+          c.on("close",()=> {
+            $("status").textContent="切断";
+            setAnswerEnabled(false);
+            recognitionActive = false;
+            if (recognition) recognition.stop();
+          });
+          c.on("data", msg=>{
+            log(`[player] recv ${JSON.stringify(msg)}`);
+            if(msg && msg.type==="round"){
+              setAnswerEnabled(true);
+              $("textInput").focus();
+              if (recognition) {
+                recognitionActive = true;
+                try { recognition.start(); } catch(e) { log('[player] recognition.start failed: ' + e); }
+              }
+            }
+            if(msg && msg.type==="roundResult"){
+              setAnswerEnabled(false);
+              recognitionActive = false;
+              if (recognition) recognition.stop();
+            }
+          });
+
+          function send(raw){
+            if(!c || !c.open) return;
+            c.send({type:"answer", raw});
+            $("lastSent").textContent = raw;
+            $("textInput").value = "";
+          }
+
+          $("textInput").onkeydown = (e) => {
+            if (e.key === "Enter") send(e.target.value);
+          };
+          
           setAnswerEnabled(false);
         })
         .catch(err => {
