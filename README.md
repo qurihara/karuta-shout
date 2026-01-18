@@ -12,3 +12,10 @@ https://github.com/nyoronjp/Ogura_Hyakunin_Isshu.csv
 
 https://otologic.jp/free/se/quiz01.html
 
+
+対応機種（基本的にChrome推奨です）
+* macのChrome/Safari
+* androidのChrome/Safari
+* iOSのChrome （ただし音声認識精度が少し悪い）
+
+

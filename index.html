@@ -35,7 +35,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 </head>
 
 <body>
-<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.12</h1>
+<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.13</h1>
 
 <div class="card" id="modeCard"></div>
 
@@ -43,7 +43,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   <div class="row">
     <div><b>状態:</b> <span id="status">-</span></div>
     <div><b>ID:</b> <code id="selfId">-</code></div>
-    <div><b>参加者:</b> <span id="peerCount">0</span></div>
+    <div id="peerCountWrapper"><b>参加者:</b> <span id="peerCount">0</span></div>
   </div>
 </div>
 
@@ -353,6 +353,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     } else {
       // --- 子機の初期化 ---
       $("playerUI").style.display="block";
+      $("peerCountWrapper").style.display = "none";
       if (!hostId) {
         alert("hostパラメータがありません。親機のQRから開いてください。");
         return;
