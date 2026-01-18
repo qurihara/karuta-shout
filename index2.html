@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>一人練習モード - 叫ぶ！百人一首</title>
+
+<style>
+body{
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,"Noto Sans JP",sans-serif;
+  max-width:980px;margin:16px auto;padding:0 12px
+}
+h1{font-size:22px}
+h2{font-size:18px;margin:0 0 6px}
+.card{border:1px solid #ddd;border-radius:12px;padding:12px;margin:12px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button,input,select{font-size:16px;padding:8px 10px}
+.choiceBtn{font-size:18px;font-weight:700;border-radius:10px}
+.big{font-size:20px;font-weight:700}
+.muted{opacity:.7}
+#log{
+  white-space:pre-wrap;background:#fafafa;border:1px solid #eee;border-radius:10px;
+  padding:10px;min-height:150px;max-height:320px;overflow:auto
+}
+.ok{color:#0a7}
+.ng{color:#c33}
+</style>
+
+<!-- kuromoji.js -->
+<script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
+</head>
+
+<body>
+<h1>叫ぶ百人一首 Karuta Shout（一人練習モード）v0.18</h1>
+
+<div class="card">
+  <div class="row">
+    <div><b>状態:</b> <span id="status">待機中</span></div>
+  </div>
+</div>
+
+<!-- HOST UI -->
+<div class="card" id="hostUI">
+  <h2>出題</h2>
+
+  <div class="row">
+    <button id="startGame" disabled>ゲーム開始</button>
+    <button id="nextRound" disabled style="display:none">次の問題</button>
+  </div>
+  <div class="row" style="margin-top:8px;align-items:center;">
+    <label for="questionCount" style="white-space:nowrap;">問題数:</label>
+    <input type="range" id="questionCount" min="1" max="100" value="100" style="flex:1">
+    <span id="questionCountValue" style="width:3em;text-align:right;font-weight:bold;">100</span>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <div>問題: <span id="questionNum">-</span> / <span id="totalQuestionCount">100</span> (歌ID: <span id="cardIdSpan">-</span>)</div>
+    <div>現在の状態: <b id="roundStatus">待機中</b></div>
+  </div>
+  <div style="margin-top:6px">出題(上の句): <span id="currentQuestionKimariji">-</span></div>
+  <div style="margin-top:6px">正解(下の句): <span id="currentAnswer">-</span></div>
+
+  <div style="margin-top:10px">
+    <div class="big">スコア</div>
+    <div id="scoreboard">1点</div>
+  </div>
+
+  <div style="margin-top:10px">
+    <div class="big">結果</div>
+    <div id="result">-</div>
+  </div>
+</div>
+
+<!-- PLAYER UI -->
+<div class="card" id="playerUI">
+  <h2>回答</h2>
+  <div id="compatMsg" class="muted"></div>
+
+  <div id="answerBlock" style="margin-top:8px">
+    <div class="row">
+      <input id="textInput" placeholder="回答を入力してEnter" style="flex:1" disabled>
+      <button id="speak" disabled>音声で回答</button>
+    </div>
+    <div class="muted">PC/Androidは音声認識、iPhoneはテキスト入力が推奨です。</div>
+    <div>送信: <span id="lastSent">-</span></div>
+  </div>
+  <button id="micPerm" style="display:none">マイク許可</button>
+</div>
+
+<div class="card">
+  <h2>ログ</h2>
+  <div id="log"></div>
+</div>
+
+
+<script>
+(() => {
+  // --- 共通設定 ---
+  let kamiKimarijiList = [];
+  let kimarijiList = [];
+  const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
+  const $ = id => document.getElementById(id);
+  const log = (s) => {
+    const el = $("log");
+    el.textContent += s + "\n";
+    el.scrollTop = el.scrollHeight;
+  };
+
+  // --- 親機側の状態管理 ---
+  let tokenizer = null;
+  let gameInProgress = false;
+  let questionIds = [];
+  let currentQuestionIndex = -1;
+  let roundOpen = false;
+  let currentCardId = null;
+  let key = null;
+  let winner = null;
+  let score = 0;
+  const answerQueue = [];
+  let isProcessingQueue = false;
+  let currentAudio = null;
+  let totalQuestions = 100;
+
+  // --- 子機側の状態管理 ---
+  let recognition = null;
+  let recognitionActive = false;
+
+  function normalizeChoice(text){
+    if(!text) return null;
+    let t = String(text).replace(/\s+/g,"").replace(/[、。．，]/g,"");
+    t = t.replace(/[\u30a1-\u30f6]/g, (match) => {
+      const chr = match.charCodeAt(0) - 0x60;
+      return String.fromCharCode(chr);
+    });
+    const sortedKimariji = kimarijiList.slice(1).sort((a, b) => b.length - a.length);
+    return sortedKimariji.find(k => t.startsWith(k)) || null;
+  }
+
+  // --- 親機ロジック ---
+  function updateScoreboard(){
+    $("scoreboard").textContent = `${score}点`;
+  }
+
+  function convertToHiragana(text) {
+    if (!tokenizer) return text;
+    const tokens = tokenizer.tokenize(text);
+    return tokens.map(token => token.reading ? token.reading.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)) : token.surface_form).join('');
+  }
+
+  async function processAnswerQueue() {
+    if (isProcessingQueue || answerQueue.length === 0 || winner) return;
+    isProcessingQueue = true;
+    const { raw } = answerQueue.shift();
+
+    try {
+      const hiraganaText = convertToHiragana(raw);
+      log(`[host] Converted "${raw}" to "${hiraganaText}"`);
+      const norm = normalizeChoice(hiraganaText);
+      const ok = (norm === key);
+
+      if (ok) {
+        new Audio('./se/Quiz-Ding_Dong02-2(Fast-Single).mp3').play();
+        winner = "player1";
+        roundOpen = false;
+        score++;
+        updateScoreboard();
+        $("result").innerHTML = `<span class="ok">正解！</span> / 回答: ${norm}`;
+        $("roundStatus").textContent = "正解！";
+        log(`[host] Correct answer!`);
+
+        if (currentAudio) currentAudio.pause();
+        const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`);
+        currentAudio = audioB;
+        
+        player_onRoundResult(); // 子機にラウンド終了を通知
+
+        if (currentQuestionIndex >= questionIds.length - 1) {
+          audioB.onended = showFinalResult;
+        } else {
+          audioB.onended = () => {
+            log('[host] Auto-advancing to next round...');
+            startNewRound();
+          };
+        }
+        $("nextRound").disabled = true;
+        audioB.play();
+      } else {
+        new Audio('./se/Quiz-Buzzer05-2(Short).mp3').play();
+        log(`[host] Incorrect answer: "${raw}"`);
+      }
+    } catch (error) {
+      log(`[host] Error processing answer: ${error}`);
+    } finally {
+      isProcessingQueue = false;
+      if (answerQueue.length > 0) processAnswerQueue();
+    }
+  }
+
+  function showFinalResult() {
+    let finalResult = `<h2>ゲーム終了！</h2> 最終スコア: ${score}点`;
+    $("result").innerHTML = finalResult;
+    $("roundStatus").textContent = "ゲーム終了";
+    $("nextRound").style.display = "none";
+    $("startGame").style.display = "inline-block";
+    $("questionCount").disabled = false;
+    gameInProgress = false;
+  }
+
+  function startNewRound(){
+    currentQuestionIndex++;
+    currentCardId = questionIds[currentQuestionIndex];
+    key = kimarijiList[currentCardId];
+    const kamiKimariji = kamiKimarijiList[currentCardId];
+
+    $("questionNum").textContent = `${currentQuestionIndex + 1} / ${totalQuestions}`;
+    $("cardIdSpan").textContent = currentCardId;
+    $("currentQuestionKimariji").textContent = kamiKimariji;
+    $("currentAnswer").textContent = key;
+    $("result").textContent="-";
+    $("nextRound").disabled = true;
+    $("roundStatus").textContent = "出題準備中...";
+    winner = null;
+    answerQueue.length = 0;
+
+    log(`[host] ROUND ${currentQuestionIndex + 1} START (ID: ${currentCardId}, Key: ${key})`);
+
+    setTimeout(() => {
+      roundOpen = true;
+      if (currentAudio) currentAudio.pause();
+      const audioA = new Audio(`./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`);
+      currentAudio = audioA;
+      audioA.play();
+      player_onRoundStart(); // 子機にラウンド開始を通知
+      $("roundStatus").textContent = "回答受付中";
+      log("[host] audio played, round opened");
+      $("nextRound").disabled = false;
+    }, 2000);
+  }
+
+  // --- 子機ロジック ---
+  function setAnswerEnabled(enabled){
+    $("textInput").disabled = !enabled;
+    $("speak").disabled = !enabled;
+  }
+
+  function player_onRoundStart() {
+    log('[player] "round" message received. trying to start recognition...');
+    setAnswerEnabled(true);
+    $("textInput").focus();
+    if (recognition) {
+      recognitionActive = true;
+      try {
+        recognition.start();
+        log('[player] recognition.start() called.');
+      } catch(e) {
+        log('[player] recognition.start() failed: ' + e);
+      }
+    } else {
+      log('[player] recognition object is null.');
+    }
+  }
+
+  function player_onRoundResult() {
+    setAnswerEnabled(false);
+    recognitionActive = false;
+    if (recognition) recognition.stop();
+  }
+
+  function sendAnswer(raw) {
+    if (!roundOpen) return;
+    $("lastSent").textContent = raw;
+    $("textInput").value = "";
+    // 親機のキューに直接追加
+    answerQueue.push({ raw });
+    processAnswerQueue();
+  }
+
+  // --- 初期化処理 ---
+  function initialize() {
+    log('[init] Initializing...');
+    const statusEl = $("status");
+    statusEl.textContent = "データ準備中...";
+
+    const loadKimariji = fetch('./小倉百人一首.csv')
+      .then(r => {
+        if (!r.ok) throw new Error(`CSV not found: ${r.status}`);
+        return r.text();
+      })
+      .then(csv => {
+        const lines = csv.trim().split('\n').slice(1);
+        kamiKimarijiList = ["", ...lines.map(l => l.split(',')[1] || "")];
+        kimarijiList = ["", ...lines.map(l => l.split(',')[2] || "")];
+        log('[init] Kimariji list loaded.');
+      });
+
+    const loadTokenizer = new Promise((resolve, reject) => {
+      kuromoji.builder({ dicPath: "./dict/" }).build((err, _tokenizer) => {
+        if (err) return reject(err);
+        tokenizer = _tokenizer;
+        log("[init] Tokenizer ready.");
+        resolve();
+      });
+    });
+
+    Promise.all([loadKimariji, loadTokenizer]).then(() => {
+      statusEl.textContent = "準備完了";
+      $("startGame").disabled = false;
+    }).catch(err => {
+      log("[init] Initialization failed: " + err);
+      statusEl.textContent = "初期化エラー";
+      alert("データの初期化に失敗しました: " + err);
+    });
+
+    // 子機UIのセットアップ
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) {
+      recognition = new SR();
+      recognition.lang = "ja-JP";
+      recognition.continuous = false;
+      recognition.interimResults = false;
+
+      if (window.SpeechGrammarList || window.webkitSpeechGrammarList) {
+        const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).filter(Boolean).join(' | ') + ' ;';
+        const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
+        speechRecognitionList.addFromString(grammar, 1);
+        recognition.grammars = speechRecognitionList;
+        log('[player] Speech grammar set.');
+      } else {
+        log('[player] Speech grammar not supported on this browser.');
+      }
+
+      recognition.onresult = e => {
+        const raw = e.results?.[e.results.length - 1]?.[0]?.transcript ?? "";
+        if (raw) sendAnswer(raw);
+      };
+      recognition.onerror = e => log(`[player] STT error: ${e.error || "unknown"}`);
+      recognition.onend = () => {
+        log("[player] STT end");
+        if (recognitionActive) {
+          log("[player] STT restarting...");
+          try { recognition.start(); } catch(e) {}
+        }
+      };
+      
+      $("micPerm").style.display = "inline-block";
+      $("speak").onclick = () => {
+        if (recognition && !recognitionActive) {
+          recognitionActive = true;
+          try { recognition.start(); } catch(e) { log('[player] recognition.start failed: ' + e); }
+        }
+      };
+      $("micPerm").onclick = async () => {
+        try {
+          await navigator.mediaDevices.getUserMedia({audio:true});
+          log("[player] mic permission OK");
+          $("micPerm").style.display = "none";
+        } catch (e) {
+          alert("マイク許可が必要です: " + e);
+        }
+      };
+    } else {
+      $("speak").style.display = "none";
+    }
+    setAnswerEnabled(false);
+
+    $("textInput").onkeydown = (e) => {
+      if (e.key === "Enter") sendAnswer(e.target.value);
+    };
+
+    // 親機UIのセットアップ
+    const questionCountSlider = $("questionCount");
+    const questionCountValue = $("questionCountValue");
+    questionCountSlider.oninput = () => {
+      questionCountValue.textContent = questionCountSlider.value;
+    };
+
+    $("startGame").onclick=()=>{
+      if (gameInProgress) return;
+      gameInProgress = true;
+      totalQuestions = parseInt($("questionCount").value, 10);
+      $("questionCount").disabled = true;
+      $("totalQuestionCount").textContent = totalQuestions;
+
+      let allIds = Array.from({length: 100}, (_, i) => i + 1);
+      for (let i = allIds.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [allIds[i], allIds[j]] = [allIds[j], allIds[i]];
+      }
+      questionIds = allIds.slice(0, totalQuestions);
+      log(`[host] Game started with ${totalQuestions} questions.`);
+      
+      currentQuestionIndex = -1;
+      score = 0;
+      updateScoreboard();
+
+      $("startGame").style.display = "none";
+      $("nextRound").style.display = "inline-block";
+      $("nextRound").disabled = false;
+      
+      startNewRound();
+    };
+
+    $("nextRound").onclick = () => {
+      if (!gameInProgress) return;
+      if (currentAudio) currentAudio.pause();
+      if (roundOpen) {
+        roundOpen = false;
+        player_onRoundResult();
+        log(`[host] Skipping question ${currentCardId}`);
+      }
+      
+      if (currentQuestionIndex >= questionIds.length - 1) {
+        showFinalResult();
+        log('[host] No more questions.');
+      } else {
+        $("roundStatus").textContent = "次の問題へ...";
+        $("nextRound").disabled = true;
+        setTimeout(startNewRound, 2000);
+      }
+    };
+  }
+
+  initialize();
+})();
+</script>
+</body>
+</html>
