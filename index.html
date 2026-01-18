@@ -35,7 +35,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 </head>
 
 <body>
-<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.11</h1>
+<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.12</h1>
 
 <div class="card" id="modeCard"></div>
 
@@ -379,10 +379,16 @@ button,input,select{font-size:16px;padding:8px 10px}
             recognition.continuous = false; // 一つの発話で停止
             recognition.interimResults = false;
 
-            const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).filter(Boolean).join(' | ') + ' ;';
-            const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
-            speechRecognitionList.addFromString(grammar, 1);
-            recognition.grammars = speechRecognitionList;
+            // SpeechGrammarListがサポートされているブラウザでのみ文法を設定
+            if (window.SpeechGrammarList || window.webkitSpeechGrammarList) {
+              const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).filter(Boolean).join(' | ') + ' ;';
+              const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
+              speechRecognitionList.addFromString(grammar, 1);
+              recognition.grammars = speechRecognitionList;
+              log('[player] Speech grammar set.');
+            } else {
+              log('[player] Speech grammar not supported on this browser.');
+            }
 
             recognition.onresult = e => {
               const raw = e.results?.[e.results.length - 1]?.[0]?.transcript ?? "";
