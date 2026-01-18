@@ -280,7 +280,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       statusEl.textContent = "辞書データ準備中...";
       log("[host] Initializing tokenizer...");
 
-      kuromoji.builder({ dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/" }).build((err, _tokenizer) => {
+      kuromoji.builder({ dicPath: "./dict/" }).build((err, _tokenizer) => {
         if (err) {
           log("[host] Tokenizer failed to build: " + err);
           statusEl.textContent = "辞書準備エラー";
