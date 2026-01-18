@@ -30,10 +30,12 @@ button,input,select{font-size:16px;padding:8px 10px}
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <!-- QR code -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<!-- kuromoji.js -->
+<script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.js"></script>
 </head>
 
 <body>
-<h1>百人一首 早押し音声クイズ（P2P / iPhone混在）</h1>
+<h1>百人一首 早押し音声クイズ（P2P / iPhone混在）v0.1</h1>
 
 <div class="card" id="modeCard"></div>
 
@@ -101,6 +103,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   <div id="log"></div>
 </div>
 
+
 <script>
 (() => {
   const kimarijiList = [
@@ -116,6 +119,8 @@ button,input,select{font-size:16px;padding:8px 10px}
     "ほ", "おも", "よのなかよ", "ながら", "よも", "なげけ", "む", "なにわえ", "たま", "みせ",
     "きり", "わがそ", "よのなかは", "みよ", "おおけ", "はなさ", "こぬ", "かぜそ", "ひとも", "もも"
   ];
+  // ★★★ gooラボのひらがな化APIを使用するために、ご自身のAPP IDを設定してください ★★★
+  const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
 
   const $ = id => document.getElementById(id);
 
@@ -136,15 +141,20 @@ button,input,select{font-size:16px;padding:8px 10px}
 
   function normalizeChoice(text){
     if(!text) return null;
-    const t = String(text).replace(/\s+/g,"").replace(/[、。．，]/g,"");
-    // ★修正：完全一致で決まり字を判定
-    return kimarijiList.find(k => k === t) || null;
+    let t = String(text).replace(/\s+/g,"").replace(/[、。．，]/g,"");
+    t = t.replace(/[\u30a1-\u30f6]/g, (match) => {
+      const chr = match.charCodeAt(0) - 0x60;
+      return String.fromCharCode(chr);
+    });
+    const sortedKimariji = kimarijiList.slice(1).sort((a, b) => b.length - a.length);
+    return sortedKimariji.find(k => t.startsWith(k)) || null;
   }
 
   const peer = new Peer();
   const conns = new Map();
 
   // --- 親機側の状態管理 ---
+  let tokenizer = null;
   let gameInProgress = false;
   let questionIds = [];
   let currentQuestionIndex = -1;
@@ -153,6 +163,8 @@ button,input,select{font-size:16px;padding:8px 10px}
   let key = null;
   let winner = null;
   const scores = new Map();
+  const answerQueue = [];
+  let isProcessingQueue = false;
 
   function broadcast(obj){
     conns.forEach(c => { if(c.open) c.send(obj); });
@@ -164,6 +176,76 @@ button,input,select{font-size:16px;padding:8px 10px}
       html += `<div>${shortId(peerId)}: ${score}点</div>`;
     });
     $("scoreboard").innerHTML = html;
+  }
+
+  function convertToHiragana(text) {
+    if (!tokenizer) {
+      log("[host] Tokenizer not ready.");
+      return text;
+    }
+    const tokens = tokenizer.tokenize(text);
+    return tokens.map(token => token.reading ? token.reading.replace(/[\u30a1-\u30f6]/g, m => String.fromCharCode(m.charCodeAt(0) - 0x60)) : token.surface_form).join('');
+  }
+
+  async function processAnswerQueue() {
+    if (isProcessingQueue || answerQueue.length === 0) return;
+    if (winner) {
+      answerQueue.length = 0;
+      return;
+    }
+
+    isProcessingQueue = true;
+    const { raw, peerId } = answerQueue.shift();
+
+    try {
+      const hiraganaText = convertToHiragana(raw);
+      log(`[host] Converted "${raw}" to "${hiraganaText}"`);
+      const norm = normalizeChoice(hiraganaText);
+      const ok = (norm === key);
+
+      if (ok) {
+        winner = peerId;
+        roundOpen = false;
+        scores.set(peerId, (scores.get(peerId) || 0) + 1);
+        updateScoreboard();
+        $("result").innerHTML = `<span class="ok">勝者:</span> ${shortId(peerId)} / 回答: ${norm}`;
+        $("roundStatus").textContent = "正解！";
+        log(`[host] Winner is ${shortId(peerId)}`);
+        const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`);
+        audioB.play();
+        broadcast({ type: "roundResult", winner, norm, raw, correct: true, key });
+
+        if (currentQuestionIndex >= questionIds.length - 1) {
+          let finalResult = "<h2>ゲーム終了！</h2>";
+          let maxScore = -1;
+          let champions = [];
+          scores.forEach((score, pId) => {
+            finalResult += `<div>${shortId(pId)}: ${score}点</div>`;
+            if (score > maxScore) {
+              maxScore = score;
+              champions = [pId];
+            } else if (score === maxScore) {
+              champions.push(pId);
+            }
+          });
+          finalResult += `<div class="big" style="margin-top:10px">優勝: ${champions.map(shortId).join(', ')}</div>`;
+          $("result").innerHTML = finalResult;
+          $("roundStatus").textContent = "ゲーム終了";
+          $("nextRound").style.display = "none";
+          $("skipRound").style.display = "none";
+          $("startGame").style.display = "inline-block";
+          gameInProgress = false;
+        } else {
+          $("nextRound").disabled = false;
+          $("skipRound").disabled = true;
+        }
+      }
+    } catch (error) {
+      log(`[host] Error processing answer: ${error}`);
+    } finally {
+      isProcessingQueue = false;
+      if (answerQueue.length > 0) processAnswerQueue();
+    }
   }
 
   // --- 子機側の状態管理 ---
@@ -180,7 +262,21 @@ button,input,select{font-size:16px;padding:8px 10px}
     if(role==="host"){
       // --- 親機の初期化 ---
       $("hostUI").style.display="block";
-      $("startGame").disabled=false;
+      const statusEl = $("roundStatus");
+      statusEl.textContent = "辞書データ準備中...";
+      log("[host] Initializing tokenizer...");
+
+      kuromoji.builder({ dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/" }).build((err, _tokenizer) => {
+        if (err) {
+          log("[host] Tokenizer failed to build: " + err);
+          statusEl.textContent = "辞書準備エラー";
+          return;
+        }
+        tokenizer = _tokenizer;
+        log("[host] Tokenizer ready.");
+        statusEl.textContent = "待機中";
+        $("startGame").disabled = false;
+      });
 
       const url = new URL(location.href);
       url.searchParams.set("role","player");
@@ -207,56 +303,10 @@ button,input,select{font-size:16px;padding:8px 10px}
         });
 
         c.on("data", msg=>{
-          log(`[host] recv from=${shortId(c.peer)} ${JSON.stringify(msg)}`);
-          if(msg && msg.type==="answer"){
-            if(!roundOpen) return;
-
-            const raw = msg.raw ?? "";
-            const norm = normalizeChoice(raw);
-            const ok = (norm === key);
-
-            if (ok) {
-              if (winner) return;
-              winner = c.peer;
-              roundOpen = false;
-
-              scores.set(c.peer, (scores.get(c.peer) || 0) + 1);
-              updateScoreboard();
-
-              $("result").innerHTML = `<span class="ok">勝者:</span> ${shortId(c.peer)} / 回答: ${norm}`;
-              $("roundStatus").textContent = "正解！";
-              log(`[host] Winner is ${shortId(c.peer)}`);
-
-              const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3,'0')}B.mp3`);
-              audioB.play();
-
-              broadcast({type:"roundResult", winner, norm, raw, correct: true, key});
-
-              if (currentQuestionIndex >= questionIds.length - 1) {
-                let finalResult = "<h2>ゲーム終了！</h2>";
-                let maxScore = -1;
-                let champions = [];
-                scores.forEach((score, peerId) => {
-                  finalResult += `<div>${shortId(peerId)}: ${score}点</div>`;
-                  if(score > maxScore){
-                    maxScore = score;
-                    champions = [peerId];
-                  } else if (score === maxScore){
-                    champions.push(peerId);
-                  }
-                });
-                finalResult += `<div class="big" style="margin-top:10px">優勝: ${champions.map(shortId).join(', ')}</div>`;
-                $("result").innerHTML = finalResult;
-                $("roundStatus").textContent = "ゲーム終了";
-                $("nextRound").style.display = "none";
-                $("skipRound").style.display = "none";
-                $("startGame").style.display = "inline-block";
-                gameInProgress = false;
-              } else {
-                $("nextRound").disabled = false;
-                $("skipRound").disabled = true;
-              }
-            }
+          if (msg && msg.type === "answer") {
+            if (!roundOpen) return;
+            answerQueue.push({ raw: msg.raw, peerId: c.peer });
+            processAnswerQueue();
           }
         });
       });
@@ -293,10 +343,8 @@ button,input,select{font-size:16px;padding:8px 10px}
 
       function send(raw){
         if(!c || !c.open) return;
-        const norm = normalizeChoice(raw);
-        log(`[player] send raw="${raw}" norm=${norm ?? "(no match)"}`);
-        c.send({type:"answer", raw, norm});
-        $("lastSent").textContent = `${raw} → ${norm ?? "×"}`;
+        c.send({type:"answer", raw});
+        $("lastSent").textContent = raw;
         $("textInput").value = "";
       }
 
@@ -366,7 +414,6 @@ button,input,select{font-size:16px;padding:8px 10px}
     $("nextRound").style.display = "inline-block";
     $("skipRound").style.display = "inline-block";
     
-    // 直接関数を呼び出して最初のラウンドを開始
     startNewRound();
   };
 
@@ -383,6 +430,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     $("skipRound").disabled = false;
     $("roundStatus").textContent = "出題準備中...";
     winner = null;
+    answerQueue.length = 0;
 
     log(`[host] ROUND ${currentQuestionIndex + 1} START (ID: ${currentCardId}, Key: ${key})`);
 
@@ -402,12 +450,15 @@ button,input,select{font-size:16px;padding:8px 10px}
     log(`[host] Skipping question ${currentCardId}`);
     roundOpen = false;
     $("roundStatus").textContent = "スキップしました";
-    broadcast({type:"roundResult"}); // ラウンド終了を通知
+    broadcast({type:"roundResult"});
 
     if (currentQuestionIndex >= questionIds.length - 1) {
-      $("startGame").click();
+      $("roundStatus").textContent = "ゲーム終了";
+      $("nextRound").style.display = "none";
+      $("skipRound").style.display = "none";
+      $("startGame").style.display = "inline-block";
+      gameInProgress = false;
     } else {
-      // 次の問題へ移るボタンを有効化
       $("nextRound").disabled = false;
       $("skipRound").disabled = true;
     }
