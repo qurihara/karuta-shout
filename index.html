@@ -35,7 +35,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 </head>
 
 <body>
-<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.14</h1>
+<h1>叫ぶ百人一首 Karuta Shout（P2P / iPhone混在）v0.15</h1>
 
 <div class="card" id="modeCard"></div>
 
@@ -54,6 +54,10 @@ button,input,select{font-size:16px;padding:8px 10px}
   <div class="row">
     <button id="startGame" disabled>ゲーム開始</button>
     <button id="nextRound" disabled style="display:none">次の問題</button>
+  </div>
+  <div class="row" style="margin-top:8px;">
+    <input type="checkbox" id="bgmMode" name="bgmMode">
+    <label for="bgmMode">作業BGMモード（次の歌まで0秒～10分）</label>
   </div>
   <div class="row" style="margin-top:8px;align-items:center;">
     <label for="questionCount" style="white-space:nowrap;">問題数:</label>
@@ -215,14 +219,8 @@ button,input,select{font-size:16px;padding:8px 10px}
         
         broadcast({ type: "roundResult", winner, norm, raw, correct: true, key });
 
-        if (currentQuestionIndex >= questionIds.length - 1) {
-          audioB.onended = showFinalResult;
-        } else {
-          audioB.onended = () => {
-            log('[host] Auto-advancing to next round...');
-            startNewRound();
-          };
-        }
+        audioB.onended = scheduleNextRound; // 次のラウンドをスケジュール
+
         $("nextRound").disabled = true; // 自動進行中は手動操作不要
         audioB.play();
       } else {
@@ -234,6 +232,28 @@ button,input,select{font-size:16px;padding:8px 10px}
     } finally {
       isProcessingQueue = false;
       if (answerQueue.length > 0) processAnswerQueue();
+    }
+  }
+
+  function scheduleNextRound() {
+    const isBgmMode = $("bgmMode").checked;
+    let delay = 2000; // デフォルトは2秒
+
+    if (isBgmMode) {
+      // 0秒から10分 (600,000ミリ秒) までのランダムな時間
+      delay = Math.random() * 600 * 1000;
+      log(`[host] BGM mode enabled. Next round in ${Math.round(delay / 1000)} seconds.`);
+    } else {
+      log(`[host] Next round in 2 seconds.`);
+    }
+
+    if (currentQuestionIndex >= questionIds.length - 1) {
+      setTimeout(showFinalResult, delay); // 最後の問題の後も遅延を入れる
+      log('[host] No more questions.');
+    } else {
+      $("roundStatus").textContent = "次の問題へ...";
+      $("nextRound").disabled = true;
+      setTimeout(startNewRound, delay);
     }
   }
 
@@ -561,15 +581,8 @@ button,input,select{font-size:16px;padding:8px 10px}
       log(`[host] Skipping question ${currentCardId}`);
     }
     
-    // 次の問題へ
-    if (currentQuestionIndex >= questionIds.length - 1) {
-      showFinalResult();
-      log('[host] No more questions.');
-    } else {
-      $("roundStatus").textContent = "次の問題へ...";
-      $("nextRound").disabled = true;
-      setTimeout(startNewRound, 2000);
-    }
+    // 次のラウンドをスケジュール
+    scheduleNextRound();
   };
 })();
 </script>
