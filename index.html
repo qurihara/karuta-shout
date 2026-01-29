@@ -203,6 +203,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   let isProcessingQueue = false;
   let currentAudio = null;
   let totalQuestions = 100;
+  let roundTimer = null;
 
   function broadcast(obj){
     conns.forEach(c => { if(c.open) c.send(obj); });
@@ -242,6 +243,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       const ok = (norm === key);
 
       if (ok) {
+        clearTimeout(roundTimer);
         winner = peerId;
         roundOpen = false;
         scores.set(peerId, (scores.get(peerId) || 0) + 1);
@@ -310,11 +312,14 @@ button,input,select{font-size:16px;padding:8px 10px}
         champions.push(pId);
       }
     });
+
     if (maxScore > 0) {
       finalResult += `<div class="big" style="margin-top:10px">優勝: ${champions.map(shortId).join(', ')}</div>`;
     } else {
       finalResult += `<div class="big" style="margin-top:10px">勝者なし</div>`;
+      champions = []; // 勝者がいないので、champions配列を明示的に空にする
     }
+
     $("result").innerHTML = finalResult;
     $("roundStatus").textContent = "ゲーム終了";
     $("nextRound").style.display = "none";
@@ -642,6 +647,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     $("roundStatus").textContent = "出題準備中...";
     winner = null;
     answerQueue.length = 0;
+    if (roundTimer) clearTimeout(roundTimer);
 
     log(`[host] ROUND ${currentQuestionIndex + 1} START (ID: ${currentCardId}, Key: ${key})`);
 
@@ -652,6 +658,31 @@ button,input,select{font-size:16px;padding:8px 10px}
       }
       const audioA = new Audio(`./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`);
       currentAudio = audioA;
+
+      audioA.onended = () => {
+        log('[host] audioA ended. Starting 10s timeout.');
+        roundTimer = setTimeout(() => {
+          if (winner) return; // 既に勝者が決まっていれば何もしない
+
+          log('[host] Round timed out.');
+          roundOpen = false;
+          if (currentAudio) currentAudio.pause();
+          
+          $("roundStatus").textContent = "時間切れ";
+          $("result").textContent = "正解者なし";
+          broadcast({ type: "roundResult", winner: null });
+
+          const buzzer = new Audio('./se/Quiz-Buzzer05-2(Short).mp3');
+          buzzer.onended = () => {
+            const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`);
+            currentAudio = audioB;
+            audioB.onended = scheduleNextRound;
+            audioB.play();
+          };
+          buzzer.play();
+        }, 10000); // 10秒タイマー
+      };
+
       audioA.play();
       broadcast({type:"round"});
       $("roundStatus").textContent = "回答受付中";
