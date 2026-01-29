@@ -551,6 +551,7 @@ button,input,select{font-size:16px;padding:8px 10px}
               setAnswerEnabled(false);
               recognitionActive = false;
               if (recognition) recognition.stop();
+              $("textInput").value = "";
 
               if (msg.winner === id) {
                 log('[player] I am the winner!');
@@ -560,6 +561,7 @@ button,input,select{font-size:16px;padding:8px 10px}
             }
             if (msg && msg.type === "incorrectAnswer") {
               new Audio('./se/Quiz-Buzzer05-2(Short).mp3').play();
+              $("textInput").value = "";
             }
             if (msg && msg.type === "gameOver") {
               if (msg.champions && msg.champions.includes(id)) {
