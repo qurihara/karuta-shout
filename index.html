@@ -99,7 +99,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   </div>
   <div class="row" style="margin-top:8px;">
     <input type="checkbox" id="reverseMode" name="reverseMode">
-    <label for="reverseMode">逆引きモード（下の句→上の句）</label>
+    <label for="reverseMode">音声札流しモード（下の句→上の句）</label>
   </div>
   <div class="row" style="margin-top:8px;align-items:center;">
     <label for="questionCount" style="white-space:nowrap;">問題数:</label>
@@ -548,7 +548,7 @@ button,input,select{font-size:16px;padding:8px 10px}
             log(`[player] recv ${JSON.stringify(msg)}`);
             if (msg && msg.type === "gameStart") {
               isReverseMode = msg.reverse;
-              log(`[player] Game starting. reverseMode=${isReverseMode}`);
+              log(`[player] Game starting. 音声札流しモード=${isReverseMode}`);
             }
             if(msg && msg.type==="round"){
               setAnswerEnabled(true);
@@ -635,7 +635,7 @@ button,input,select{font-size:16px;padding:8px 10px}
         [allIds[i], allIds[j]] = [allIds[j], allIds[i]];
     }
     questionIds = allIds.slice(0, totalQuestions);
-    log(`[host] Game started with ${totalQuestions} questions. Reverse mode: ${isReverseMode}`);
+    log(`[host] Game started with ${totalQuestions} questions. 音声札流しモード: ${isReverseMode}`);
     currentQuestionIndex = -1;
     scores.forEach((_, key) => scores.set(key, 0));
     updateScoreboard();
