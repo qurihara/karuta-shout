@@ -97,6 +97,10 @@ button,input,select{font-size:16px;padding:8px 10px}
     <input type="checkbox" id="bgmMode" name="bgmMode">
     <label for="bgmMode">作業BGMモード（次の歌まで0秒～10分）</label>
   </div>
+  <div class="row" style="margin-top:8px;">
+    <input type="checkbox" id="reverseMode" name="reverseMode">
+    <label for="reverseMode">逆引きモード（下の句→上の句）</label>
+  </div>
   <div class="row" style="margin-top:8px;align-items:center;">
     <label for="questionCount" style="white-space:nowrap;">問題数:</label>
     <input type="range" id="questionCount" min="1" max="100" value="100" style="flex:1">
@@ -106,8 +110,8 @@ button,input,select{font-size:16px;padding:8px 10px}
     <div>問題: <span id="questionNum">-</span> / 100 (歌ID: <span id="cardIdSpan">-</span>)</div>
     <div>現在の状態: <b id="roundStatus">待機中</b></div>
   </div>
-  <div style="margin-top:6px">出題(上の句): <span id="currentQuestionKimariji">-</span></div>
-  <div style="margin-top:6px">正解(下の句): <span id="currentAnswer">-</span></div>
+  <div style="margin-top:6px" id="questionWrap">出題(上の句): <span id="currentQuestionKimariji">-</span></div>
+  <div style="margin-top:6px" id="answerWrap">正解(下の句): <span id="currentAnswer">-</span></div>
 
 
   <div style="margin-top:10px">
@@ -155,6 +159,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 (() => {
   let kamiKimarijiList = [];
   let kimarijiList = [];
+  let isReverseMode = false;
   // ★★★ gooラボのひらがな化APIを使用するために、ご自身のAPP IDを設定してください ★★★
   const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
 
@@ -182,7 +187,8 @@ button,input,select{font-size:16px;padding:8px 10px}
       const chr = match.charCodeAt(0) - 0x60;
       return String.fromCharCode(chr);
     });
-    const sortedKimariji = kimarijiList.slice(1).sort((a, b) => b.length - a.length);
+    const targetList = isReverseMode ? kamiKimarijiList : kimarijiList;
+    const sortedKimariji = targetList.slice(1).sort((a, b) => b.length - a.length);
     return sortedKimariji.find(k => t.startsWith(k)) || null;
   }
 
@@ -253,14 +259,16 @@ button,input,select{font-size:16px;padding:8px 10px}
         log(`[host] Winner is ${shortId(peerId)}`);
 
         if (currentAudio) currentAudio.pause();
-        const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`);
+        
+        const audioFile = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3, '0')}A.mp3` : `./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`;
+        const audioB = new Audio(audioFile);
         currentAudio = audioB;
         
         broadcast({ type: "roundResult", winner, norm, raw, correct: true, key });
 
-        audioB.onended = scheduleNextRound; // 次のラウンドをスケジュール
+        audioB.onended = scheduleNextRound;
 
-        $("nextRound").disabled = true; // 自動進行中は手動操作不要
+        $("nextRound").disabled = true;
         audioB.play();
       } else {
         const conn = conns.get(peerId);
@@ -279,10 +287,9 @@ button,input,select{font-size:16px;padding:8px 10px}
 
   function scheduleNextRound() {
     const isBgmMode = $("bgmMode").checked;
-    let delay = 2000; // デフォルトは2秒
+    let delay = 2000;
 
     if (isBgmMode) {
-      // 0秒から10分 (600,000ミリ秒) までのランダムな時間
       delay = Math.random() * 600 * 1000;
       log(`[host] BGM mode enabled. Next round in ${Math.round(delay / 1000)} seconds.`);
     } else {
@@ -290,7 +297,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     }
 
     if (currentQuestionIndex >= questionIds.length - 1) {
-      setTimeout(showFinalResult, delay); // 最後の問題の後も遅延を入れる
+      setTimeout(showFinalResult, delay);
       log('[host] No more questions.');
     } else {
       $("roundStatus").textContent = "次の問題へ...";
@@ -317,7 +324,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       finalResult += `<div class="big" style="margin-top:10px">優勝: ${champions.map(shortId).join(', ')}</div>`;
     } else {
       finalResult += `<div class="big" style="margin-top:10px">勝者なし</div>`;
-      champions = []; // 勝者がいないので、champions配列を明示的に空にする
+      champions = [];
     }
 
     $("result").innerHTML = finalResult;
@@ -325,6 +332,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     $("nextRound").style.display = "none";
     $("startGame").style.display = "inline-block";
     $("questionCount").disabled = false;
+    $("reverseMode").disabled = false;
     gameInProgress = false;
     broadcast({ type: "gameOver", champions });
   }
@@ -451,8 +459,9 @@ button,input,select{font-size:16px;padding:8px 10px}
         })
         .then(csv => {
           const lines = csv.trim().split('\n').slice(1);
+          kamiKimarijiList = ["", ...lines.map(l => l.split(',')[1] || "")];
           kimarijiList = ["", ...lines.map(l => l.split(',')[2] || "")];
-          log('[player] Kimariji list loaded.');
+          log('[player] Kimariji lists loaded.');
 
           let recognition = null;
           let recognitionActive = false;
@@ -461,16 +470,11 @@ button,input,select{font-size:16px;padding:8px 10px}
           if (SR) {
             recognition = new SR();
             recognition.lang = "ja-JP";
-            recognition.continuous = false; // 一つの発話で停止
+            recognition.continuous = false;
             recognition.interimResults = false;
 
-            // SpeechGrammarListがサポートされているブラウザでのみ文法を設定
             if (window.SpeechGrammarList || window.webkitSpeechGrammarList) {
-              const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + kimarijiList.slice(1).filter(Boolean).join(' | ') + ' ;';
-              const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
-              speechRecognitionList.addFromString(grammar, 1);
-              recognition.grammars = speechRecognitionList;
-              log('[player] Speech grammar set.');
+              log('[player] Speech grammar will be set on round start.');
             } else {
               log('[player] Speech grammar not supported on this browser.');
             }
@@ -480,18 +484,16 @@ button,input,select{font-size:16px;padding:8px 10px}
               if (!result) return;
 
               let sent = false;
-              // 候補をループして、最初に有効な決まり字にマッチしたものを送信
               for (const alt of result) {
                 const normalized = normalizeChoice(alt.transcript);
                 if (normalized) {
                   log(`[player] STT matched: "${alt.transcript}" (confidence: ${alt.confidence}) -> normalized: "${normalized}"`);
-                  send(alt.transcript); // 元のテキストを送る
+                  send(alt.transcript);
                   sent = true;
-                  break; // マッチしたらループを抜ける
+                  break;
                 }
               }
 
-              // どの候補も決まり字にマッチしなかった場合、最初の候補を送る
               if (!sent && result[0]) {
                   const raw = result[0].transcript;
                   log(`[player] STT result raw (no match): "${raw}"`);
@@ -544,10 +546,22 @@ button,input,select{font-size:16px;padding:8px 10px}
           });
           c.on("data", msg=>{
             log(`[player] recv ${JSON.stringify(msg)}`);
+            if (msg && msg.type === "gameStart") {
+              isReverseMode = msg.reverse;
+              log(`[player] Game starting. reverseMode=${isReverseMode}`);
+            }
             if(msg && msg.type==="round"){
               setAnswerEnabled(true);
               $("textInput").focus();
               if (recognition) {
+                if (window.SpeechGrammarList || window.webkitSpeechGrammarList) {
+                    const targetList = isReverseMode ? kamiKimarijiList : kimarijiList;
+                    const grammar = '#JSGF V1.0; grammar choices; public <choice> = ' + targetList.slice(1).filter(Boolean).join(' | ') + ' ;';
+                    const speechRecognitionList = new (window.SpeechGrammarList || window.webkitSpeechGrammarList)();
+                    speechRecognitionList.addFromString(grammar, 1);
+                    recognition.grammars = speechRecognitionList;
+                    log(`[player] Speech grammar set for ${isReverseMode ? 'reverse' : 'normal'} mode.`);
+                }
                 recognitionActive = true;
                 try { recognition.start(); } catch(e) { log('[player] recognition.start failed: ' + e); }
               }
@@ -611,7 +625,9 @@ button,input,select{font-size:16px;padding:8px 10px}
     if (role !== "host" || gameInProgress) return;
     gameInProgress = true;
     totalQuestions = parseInt($("questionCount").value, 10);
+    isReverseMode = $("reverseMode").checked;
     $("questionCount").disabled = true;
+    $("reverseMode").disabled = true;
 
     let allIds = Array.from({length: 100}, (_, i) => i + 1);
     for (let i = allIds.length - 1; i > 0; i--) {
@@ -619,10 +635,12 @@ button,input,select{font-size:16px;padding:8px 10px}
         [allIds[i], allIds[j]] = [allIds[j], allIds[i]];
     }
     questionIds = allIds.slice(0, totalQuestions);
-    log(`[host] Game started with ${totalQuestions} questions.`);
+    log(`[host] Game started with ${totalQuestions} questions. Reverse mode: ${isReverseMode}`);
     currentQuestionIndex = -1;
     scores.forEach((_, key) => scores.set(key, 0));
     updateScoreboard();
+
+    broadcast({ type: 'gameStart', reverse: isReverseMode });
 
     $("startGame").style.display = "none";
     $("nextRound").style.display = "inline-block";
@@ -635,13 +653,23 @@ button,input,select{font-size:16px;padding:8px 10px}
     if (role !== "host") return;
     currentQuestionIndex++;
     currentCardId = questionIds[currentQuestionIndex];
-    key = kimarijiList[currentCardId];
-    const kamiKimariji = kamiKimarijiList[currentCardId];
+    
+    const kami = kamiKimarijiList[currentCardId];
+    const shimo = kimarijiList[currentCardId];
+
+    key = isReverseMode ? kami : shimo;
+    const questionText = isReverseMode ? shimo : kami;
+    const answerText = isReverseMode ? kami : shimo;
+    
+    const questionLabel = isReverseMode ? '出題(下の句)' : '出題(上の句)';
+    const answerLabel = isReverseMode ? '正解(上の句)' : '正解(下の句)';
+    $("questionWrap").innerHTML = `${questionLabel}: <span id="currentQuestionKimariji">-</span>`;
+    $("answerWrap").innerHTML = `${answerLabel}: <span id="currentAnswer">-</span>`;
 
     $("questionNum").textContent = `${currentQuestionIndex + 1} / ${totalQuestions}`;
     $("cardIdSpan").textContent = currentCardId;
-    $("currentQuestionKimariji").textContent = kamiKimariji;
-    $("currentAnswer").textContent = key;
+    $("currentQuestionKimariji").textContent = questionText;
+    $("currentAnswer").textContent = answerText;
     $("result").textContent="-";
     $("nextRound").disabled = true;
     $("roundStatus").textContent = "出題準備中...";
@@ -656,13 +684,15 @@ button,input,select{font-size:16px;padding:8px 10px}
       if (currentAudio) {
         currentAudio.pause();
       }
-      const audioA = new Audio(`./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`);
+      
+      const audioFile = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3,'0')}B.mp3` : `./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`;
+      const audioA = new Audio(audioFile);
       currentAudio = audioA;
 
       audioA.onended = () => {
         log('[host] audioA ended. Starting 10s timeout.');
         roundTimer = setTimeout(() => {
-          if (winner) return; // 既に勝者が決まっていれば何もしない
+          if (winner) return;
 
           log('[host] Round timed out.');
           roundOpen = false;
@@ -674,13 +704,14 @@ button,input,select{font-size:16px;padding:8px 10px}
 
           const buzzer = new Audio('./se/Quiz-Buzzer05-2(Short).mp3');
           buzzer.onended = () => {
-            const audioB = new Audio(`./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`);
+            const audioFileB = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3, '0')}A.mp3` : `./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`;
+            const audioB = new Audio(audioFileB);
             currentAudio = audioB;
             audioB.onended = scheduleNextRound;
             audioB.play();
           };
           buzzer.play();
-        }, 10000); // 10秒タイマー
+        }, 10000);
       };
 
       audioA.play();
@@ -694,22 +725,20 @@ button,input,select{font-size:16px;padding:8px 10px}
   $("nextRound").onclick = () => {
     if (role !== "host" || !gameInProgress) return;
 
-    // 進行中のラウンドを中断
     if (currentAudio) {
       currentAudio.pause();
       currentAudio = null;
     }
+    if (roundTimer) clearTimeout(roundTimer);
     if (roundOpen) {
       roundOpen = false;
       broadcast({type:"roundResult"});
       log(`[host] Skipping question ${currentCardId}`);
     }
     
-    // 次のラウンドをスケジュール
     scheduleNextRound();
   };
 })();
-</script>
 </script>
 </body>
 </html>
