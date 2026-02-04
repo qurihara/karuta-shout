@@ -702,15 +702,13 @@ button,input,select{font-size:16px;padding:8px 10px}
           $("result").textContent = "正解者なし";
           broadcast({ type: "roundResult", winner: null });
 
-          const buzzer = new Audio('./se/Quiz-Buzzer05-2(Short).mp3');
-          buzzer.onended = () => {
-            const audioFileB = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3, '0')}A.mp3` : `./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`;
-            const audioB = new Audio(audioFileB);
-            currentAudio = audioB;
-            audioB.onended = scheduleNextRound;
-            audioB.play();
-          };
-          buzzer.play();
+          new Audio('./se/決定ボタンを押す2.mp3').play();
+
+          const audioFileB = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3, '0')}A.mp3` : `./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`;
+          const audioB = new Audio(audioFileB);
+          currentAudio = audioB;
+          audioB.onended = scheduleNextRound;
+          audioB.play();
         }, 10000);
       };
 
