@@ -61,6 +61,17 @@ button,input,select{font-size:16px;padding:8px 10px}
     opacity: 0;
   }
 }
+
+.annotation {
+  color: #ccc; /* 注釈全体の文字色を少し薄くします */
+  font-size: 12px;
+  text-align: center;
+  margin-top: 24px;
+}
+.annotation a {
+  color: #fff !important; /* リンクの色を白にします */
+  text-decoration: underline;
+}
 </style>
 
 <!-- PeerJS (public PeerServer Cloud) -->
@@ -136,6 +147,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 <!-- PLAYER UI -->
 <div class="card" id="playerUI" style="display:none">
   <h2>子機（回答者）</h2>
+  <div><b>ニックネーム:</b> <span id="myNickname">-</span></div>
   <div id="compatMsg" class="muted"></div>
 
   <div id="answerBlock" style="margin-top:8px">
@@ -159,6 +171,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 (() => {
   let kamiKimarijiList = [];
   let kimarijiList = [];
+  let animalNames = [];
   let isReverseMode = false;
   // ★★★ gooラボのひらがな化APIを使用するために、ご自身のAPP IDを設定してください ★★★
   const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
@@ -204,7 +217,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   let currentCardId = null;
   let key = null;
   let winner = null;
-  const scores = new Map();
+  const playerInfo = new Map(); // { score, nickname }
   const answerQueue = [];
   let isProcessingQueue = false;
   let currentAudio = null;
@@ -217,8 +230,8 @@ button,input,select{font-size:16px;padding:8px 10px}
 
   function updateScoreboard(){
     let html = "";
-    scores.forEach((score, peerId) => {
-      html += `<div>${shortId(peerId)}: ${score}点</div>`;
+    playerInfo.forEach((info, peerId) => {
+      html += `<div>${info.nickname} (${shortId(peerId)}): ${info.score}点</div>`;
     });
     $("scoreboard").innerHTML = html;
   }
@@ -252,11 +265,15 @@ button,input,select{font-size:16px;padding:8px 10px}
         clearTimeout(roundTimer);
         winner = peerId;
         roundOpen = false;
-        scores.set(peerId, (scores.get(peerId) || 0) + 1);
+        const winnerInfo = playerInfo.get(peerId);
+        if(winnerInfo) {
+          winnerInfo.score = (winnerInfo.score || 0) + 1;
+        }
         updateScoreboard();
-        $("result").innerHTML = `<span class="ok">勝者:</span> ${shortId(peerId)} / 回答: ${norm}`;
+        const winnerName = winnerInfo ? `${winnerInfo.nickname} (${shortId(winner)})` : shortId(winner);
+        $("result").innerHTML = `<span class="ok">勝者:</span> ${winnerName} / 回答: ${norm}`;
         $("roundStatus").textContent = "正解！";
-        log(`[host] Winner is ${shortId(peerId)}`);
+        log(`[host] Winner is ${winnerName}`);
 
         if (currentAudio) currentAudio.pause();
         
@@ -310,18 +327,20 @@ button,input,select{font-size:16px;padding:8px 10px}
     let finalResult = "<h2>ゲーム終了！</h2>";
     let maxScore = -1;
     let champions = [];
-    scores.forEach((score, pId) => {
-      finalResult += `<div>${shortId(pId)}: ${score}点</div>`;
-      if (score > maxScore) {
-        maxScore = score;
+    playerInfo.forEach((info, pId) => {
+      const playerName = `${info.nickname} (${shortId(pId)})`;
+      finalResult += `<div>${playerName}: ${info.score}点</div>`;
+      if (info.score > maxScore) {
+        maxScore = info.score;
         champions = [pId];
-      } else if (score === maxScore) {
+      } else if (info.score === maxScore) {
         champions.push(pId);
       }
     });
 
     if (maxScore > 0) {
-      finalResult += `<div class="big" style="margin-top:10px">優勝: ${champions.map(shortId).join(', ')}</div>`;
+      const championNames = champions.map(pId => playerInfo.get(pId).nickname).join(', ');
+      finalResult += `<div class="big" style="margin-top:10px">優勝: ${championNames}</div>`;
     } else {
       finalResult += `<div class="big" style="margin-top:10px">勝者なし</div>`;
       champions = [];
@@ -361,6 +380,28 @@ button,input,select{font-size:16px;padding:8px 10px}
     }
   }
 
+  const loadKimariji = fetch('./小倉百人一首.csv')
+    .then(r => {
+      if (!r.ok) throw new Error(`CSV not found: ${r.status}`);
+      return r.text();
+    })
+    .then(csv => {
+      const lines = csv.trim().split('\n').slice(1);
+      kamiKimarijiList = ["", ...lines.map(l => l.split(',')[1] || "")];
+      kimarijiList = ["", ...lines.map(l => l.split(',')[2] || "")];
+      log('[init] Kimariji list loaded.');
+    });
+
+  const loadAnimalNames = fetch('./animal.txt')
+    .then(r => {
+      if (!r.ok) throw new Error(`animal.txt not found: ${r.status}`);
+      return r.text();
+    })
+    .then(text => {
+      animalNames = text.trim().split('\n').filter(Boolean);
+      log('[init] Animal name list loaded.');
+    });
+
   peer.on("open", id => {
     $("selfId").textContent = id.slice(0,12);
     $("status").textContent = "接続OK";
@@ -379,18 +420,6 @@ button,input,select{font-size:16px;padding:8px 10px}
       statusEl.textContent = "データ準備中...";
       log("[host] Initializing data...");
 
-      const loadKimariji = fetch('./小倉百人一首.csv')
-        .then(r => {
-          if (!r.ok) throw new Error(`CSV not found: ${r.status}`);
-          return r.text();
-        })
-        .then(csv => {
-          const lines = csv.trim().split('\n').slice(1);
-          kamiKimarijiList = ["", ...lines.map(l => l.split(',')[1] || "")];
-          kimarijiList = ["", ...lines.map(l => l.split(',')[2] || "")];
-          log('[host] Kimariji list loaded.');
-        });
-
       const loadTokenizer = new Promise((resolve, reject) => {
         kuromoji.builder({ dicPath: "./dict/" }).build((err, _tokenizer) => {
           if (err) return reject(err);
@@ -400,7 +429,7 @@ button,input,select{font-size:16px;padding:8px 10px}
         });
       });
 
-      Promise.all([loadKimariji, loadTokenizer]).then(() => {
+      Promise.all([loadKimariji, loadTokenizer, loadAnimalNames]).then(() => {
         statusEl.textContent = "待機中";
         $("startGame").disabled = false;
       }).catch(err => {
@@ -418,27 +447,36 @@ button,input,select{font-size:16px;padding:8px 10px}
       new QRCode($("qrcode"),{text:url.toString(),width:200,height:200});
       log(`[host] join url = ${url.toString()}`);
 
-      peer.on("connection", c=>{
-        conns.set(c.peer,c);
-        scores.set(c.peer, 0);
-        $("peerCount").textContent = conns.size;
-        updateScoreboard();
-        log(`[host] connected: peer=${c.peer}`);
-
-        c.on("close", () => {
-          conns.delete(c.peer);
-          scores.delete(c.peer);
-          $("peerCount").textContent = conns.size;
-          updateScoreboard();
-          log(`[host] disconnected: peer=${c.peer}`);
-        });
-
-        c.on("data", msg=>{
+      peer.on("connection", c => {
+        // イベントハンドラを先に登録する
+        c.on("data", msg => {
           if (msg && msg.type === "answer") {
             if (!roundOpen) return;
             answerQueue.push({ raw: msg.raw, peerId: c.peer });
             processAnswerQueue();
           }
+        });
+
+        c.on("close", () => {
+          const closedPlayer = playerInfo.get(c.peer);
+          log(`[host] disconnected: peer=${c.peer} was ${closedPlayer?.nickname}`);
+          conns.delete(c.peer);
+          playerInfo.delete(c.peer);
+          $("peerCount").textContent = conns.size;
+          updateScoreboard();
+        });
+
+        // 'open' を待ってから、接続処理とメッセージ送信を行う
+        c.on('open', () => {
+          conns.set(c.peer, c);
+          const nickname = animalNames[(conns.size - 1) % animalNames.length];
+          playerInfo.set(c.peer, { score: 0, nickname: nickname });
+
+          c.send({ type: 'nickname', name: nickname });
+
+          $("peerCount").textContent = conns.size;
+          updateScoreboard();
+          log(`[host] connected: peer=${c.peer} as ${nickname}`);
         });
       });
 
@@ -451,17 +489,9 @@ button,input,select{font-size:16px;padding:8px 10px}
         return;
       }
 
-      $("status").textContent="決まり字データ読込中...";
-      fetch('./小倉百人一首.csv')
-        .then(r => {
-          if (!r.ok) throw new Error(`CSV not found: ${r.status}`);
-          return r.text();
-        })
-        .then(csv => {
-          const lines = csv.trim().split('\n').slice(1);
-          kamiKimarijiList = ["", ...lines.map(l => l.split(',')[1] || "")];
-          kimarijiList = ["", ...lines.map(l => l.split(',')[2] || "")];
-          log('[player] Kimariji lists loaded.');
+      $("status").textContent="データ読込中...";
+      Promise.all([loadKimariji, loadAnimalNames]).then(() => {
+          log('[player] Data loaded.');
 
           let recognition = null;
           let recognitionActive = false;
@@ -546,6 +576,10 @@ button,input,select{font-size:16px;padding:8px 10px}
           });
           c.on("data", msg=>{
             log(`[player] recv ${JSON.stringify(msg)}`);
+            if (msg && msg.type === 'nickname') {
+              $("myNickname").textContent = msg.name;
+              log(`[player] My nickname is ${msg.name}`);
+            }
             if (msg && msg.type === "gameStart") {
               isReverseMode = msg.reverse;
               log(`[player] Game starting. 音声札流しモード=${isReverseMode}`);
@@ -637,7 +671,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     questionIds = allIds.slice(0, totalQuestions);
     log(`[host] Game started with ${totalQuestions} questions. 音声札流しモード: ${isReverseMode}`);
     currentQuestionIndex = -1;
-    scores.forEach((_, key) => scores.set(key, 0));
+    playerInfo.forEach((info, key) => info.score = 0);
     updateScoreboard();
 
     broadcast({ type: 'gameStart', reverse: isReverseMode });
@@ -738,5 +772,8 @@ button,input,select{font-size:16px;padding:8px 10px}
   };
 })();
 </script>
+<p class="annotation">
+  ※和歌の「一般的な解釈」は<a href="https://www.karuta.or.jp/karuta-everyday/" target="_blank" rel="noopener noreferrer" style="color: #fff !important;">全日本かるた協会ウェブサイト</a>から引用しています。
+</p>
 </body>
 </html>
