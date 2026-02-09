@@ -209,7 +209,6 @@ button,input,select{font-size:16px;padding:8px 10px}
   let kamiKimarijiList = [];
   let kimarijiList = [];
   let animalNames = [];
-  let zokuseiList = [];
   let isReverseMode = false;
   // ★★★ gooラボのひらがな化APIを使用するために、ご自身のAPP IDを設定してください ★★★
   const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
@@ -319,7 +318,7 @@ button,input,select{font-size:16px;padding:8px 10px}
         const audioB = new Audio(audioFile);
         currentAudio = audioB;
         
-        broadcast({ type: "roundResult", winner, norm, raw, correct: true, key });
+        broadcast({ type: "roundResult", winner, norm, raw, correct: true, key, cardId: currentCardId });
 
         audioB.onended = scheduleNextRound;
 
@@ -395,8 +394,6 @@ button,input,select{font-size:16px;padding:8px 10px}
   }
 
   // --- 子機側の状態管理 ---
-  let currentZokusei = null;
-
   function setAnswerEnabled(enabled){
     $("textInput").disabled = !enabled;
     $("speak").disabled = !enabled;
@@ -420,15 +417,12 @@ button,input,select{font-size:16px;padding:8px 10px}
     }
   }
 
-  function showZokuseiEffect(zokusei) {
-    if (!zokusei) return;
-    const zokuseiMap = { '殿': 'tono', '姫': 'hime', '坊主': 'bouzu' };
-    const imageName = zokuseiMap[zokusei];
-    if (!imageName) return;
+  function showWakaImageEffect(cardId) {
+    if (!cardId) return;
 
     const container = $('zokusei-container');
     const image = $('zokusei-image');
-    image.src = `./images/${imageName}.png`;
+    image.src = `./images/v${cardId}.png`;
 
     container.style.display = 'flex';
     container.className = 'zokusei-container slide-in';
@@ -473,23 +467,6 @@ button,input,select{font-size:16px;padding:8px 10px}
       }
     });
 
-  const loadZokusei = fetch('./zokusei.csv')
-    .then(r => {
-      if (!r.ok) throw new Error(`zokusei.csv not found: ${r.status}`);
-      return r.text();
-    })
-    .then(csv => {
-      const lines = csv.trim().split('\n').slice(1);
-      zokuseiList = [""]; // index 0 は使わない
-      lines.forEach(line => {
-        const [id, , zokusei] = line.split(','); // 2列目を無視して3列目を取得
-        if (id && zokusei) {
-          zokuseiList[parseInt(id, 10)] = zokusei.trim();
-        }
-      });
-      log('[init] Zokusei list loaded.');
-    });
-
   peer.on("open", id => {
     $("selfId").textContent = id.slice(0,12);
     $("status").textContent = "接続OK";
@@ -517,7 +494,7 @@ button,input,select{font-size:16px;padding:8px 10px}
         });
       });
 
-      Promise.all([loadKimariji, loadTokenizer, loadAnimalNames, loadZokusei]).then(() => {
+      Promise.all([loadKimariji, loadTokenizer, loadAnimalNames]).then(() => {
         statusEl.textContent = "待機中";
         $("startGame").disabled = false;
       }).catch(err => {
@@ -578,7 +555,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       }
 
       $("status").textContent="データ読込中...";
-      Promise.all([loadKimariji, loadAnimalNames, loadZokusei]).then(() => {
+      Promise.all([loadKimariji, loadAnimalNames]).then(() => {
           log('[player] Data loaded.');
 
           let recognition = null;
@@ -673,7 +650,6 @@ button,input,select{font-size:16px;padding:8px 10px}
               log(`[player] Game starting. 音声札流しモード=${isReverseMode}`);
             }
             if(msg && msg.type==="round"){
-              currentZokusei = msg.zokusei;
               setAnswerEnabled(true);
               $("textInput").focus();
               if (recognition) {
@@ -699,7 +675,7 @@ button,input,select{font-size:16px;padding:8px 10px}
                 log('[player] I am the winner!');
                 new Audio('./se/Quiz-Ding_Dong02-2(Fast-Single).mp3').play();
                 showConfetti();
-                showZokuseiEffect(currentZokusei);
+                showWakaImageEffect(msg.cardId);
               }
             }
             if (msg && msg.type === "incorrectAnswer") {
@@ -780,7 +756,6 @@ button,input,select{font-size:16px;padding:8px 10px}
     
     const kami = kamiKimarijiList[currentCardId];
     const shimo = kimarijiList[currentCardId];
-    const zokusei = zokuseiList[currentCardId];
 
     key = isReverseMode ? kami : shimo;
     const questionText = isReverseMode ? shimo : kami;
@@ -802,7 +777,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     answerQueue.length = 0;
     if (roundTimer) clearTimeout(roundTimer);
 
-    log(`[host] ROUND ${currentQuestionIndex + 1} START (ID: ${currentCardId}, Key: ${key}, Zokusei: ${zokusei})`);
+    log(`[host] ROUND ${currentQuestionIndex + 1} START (ID: ${currentCardId}, Key: ${key})`);
 
     setTimeout(() => {
       roundOpen = true;
@@ -838,7 +813,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       };
 
       audioA.play();
-      broadcast({type:"round", zokusei: zokusei});
+      broadcast({type:"round"});
       $("roundStatus").textContent = "回答受付中";
       log("[host] audio played, round opened");
       $("nextRound").disabled = false;
