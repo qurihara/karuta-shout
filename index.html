@@ -139,6 +139,14 @@ button,input,select{font-size:16px;padding:8px 10px}
     <button id="nextRound" disabled style="display:none">次の問題</button>
   </div>
   <div class="row" style="margin-top:8px;">
+    <input type="checkbox" id="showCardImageMode" name="showCardImageMode">
+    <label for="showCardImageMode">札イラスト表示</label>
+  </div>
+  <div class="row" style="margin-top:8px;">
+    <input type="checkbox" id="autoProceedMode" name="autoProceedMode" checked>
+    <label for="autoProceedMode">自動進行</label>
+  </div>
+  <div class="row" style="margin-top:8px;">
     <input type="checkbox" id="bgmMode" name="bgmMode">
     <label for="bgmMode">作業BGMモード（次の歌まで0秒～10分）</label>
   </div>
@@ -341,23 +349,31 @@ button,input,select{font-size:16px;padding:8px 10px}
   }
 
   function scheduleNextRound() {
+    const isAutoProceed = $("autoProceedMode").checked;
     const isBgmMode = $("bgmMode").checked;
-    let delay = 2000;
 
-    if (isBgmMode) {
-      delay = Math.random() * 600 * 1000;
-      log(`[host] BGM mode enabled. Next round in ${Math.round(delay / 1000)} seconds.`);
-    } else {
-      log(`[host] Next round in 2 seconds.`);
+    // 最後の問題が終わった場合
+    if (currentQuestionIndex >= questionIds.length - 1) {
+      if (isAutoProceed) {
+        setTimeout(showFinalResult, 2000);
+      } else {
+        $("roundStatus").textContent = "ゲーム終了！";
+        $("nextRound").disabled = false; // 結果表示のためにボタンを有効化
+      }
+      log('[host] No more questions.');
+      return;
     }
 
-    if (currentQuestionIndex >= questionIds.length - 1) {
-      setTimeout(showFinalResult, delay);
-      log('[host] No more questions.');
-    } else {
+    // 次のラウンドへ
+    if (isAutoProceed) {
+      const delay = isBgmMode ? Math.random() * 600 * 1000 : 2000;
+      log(`[host] Auto-proceeding to next round in ${Math.round(delay / 1000)} seconds.`);
       $("roundStatus").textContent = "次の問題へ...";
       $("nextRound").disabled = true;
       setTimeout(startNewRound, delay);
+    } else {
+      $("roundStatus").textContent = "次の問題をお待ちください";
+      $("nextRound").disabled = false;
     }
   }
 
@@ -785,6 +801,10 @@ button,input,select{font-size:16px;padding:8px 10px}
       if (currentAudio) {
         currentAudio.pause();
       }
+
+      if ($("showCardImageMode").checked) {
+        showWakaImageEffect(currentCardId);
+      }
       
       const audioFile = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3,'0')}B.mp3` : `./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`;
       const audioA = new Audio(audioFile);
@@ -801,7 +821,7 @@ button,input,select{font-size:16px;padding:8px 10px}
           
           $("roundStatus").textContent = "時間切れ";
           $("result").textContent = "正解者なし";
-          broadcast({ type: "roundResult", winner: null });
+          broadcast({ type: "roundResult", winner: null, cardId: currentCardId });
 
           new Audio('./se/決定ボタンを押す2.mp3').play();
 
@@ -824,18 +844,25 @@ button,input,select{font-size:16px;padding:8px 10px}
   $("nextRound").onclick = () => {
     if (role !== "host" || !gameInProgress) return;
 
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio = null;
-    }
-    if (roundTimer) clearTimeout(roundTimer);
+    // ラウンド中に押された場合（スキップ処理）
     if (roundOpen) {
+      if (currentAudio) currentAudio.pause();
+      if (roundTimer) clearTimeout(roundTimer);
       roundOpen = false;
-      broadcast({type:"roundResult"});
+      broadcast({type:"roundResult", winner: null, cardId: currentCardId}); // cardIdも送る
       log(`[host] Skipping question ${currentCardId}`);
+      scheduleNextRound(); // スキップ後の処理は scheduleNextRound に任せる
+      return;
     }
-    
-    scheduleNextRound();
+
+    // ラウンド終了後（自動進行OFF時）に押された場合
+    if (!$("autoProceedMode").checked && !roundOpen) {
+      if (currentQuestionIndex >= questionIds.length - 1) {
+          showFinalResult();
+      } else {
+          startNewRound();
+      }
+    }
   };
 })();
 </script>
