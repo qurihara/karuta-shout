@@ -205,7 +205,8 @@ https://otologic.jp/free/se/quiz01.html
 
 ### 27.
 みかの原わきて流るる泉川 いつ見きとてか恋しかるらむ
-![歌27](images//m27.jpg)
+
+<img src="images/m27.jpg" alt="歌27" width="25%">
 
 ---
 
@@ -652,7 +653,8 @@ https://otologic.jp/free/se/quiz01.html
 
 ### 91.
 きりぎりす鳴くや霜夜のさむしろに 衣かたしきひとりかも寝む
-![歌91](images//m91.jpg)
+
+<img src="images/m91.jpg" alt="歌91" width="25%">
 
 ---
 
