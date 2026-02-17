@@ -169,6 +169,11 @@ button,input,select{font-size:16px;padding:8px 10px}
     <input type="range" id="questionCount" min="1" max="100" value="100" style="flex:1">
     <span id="questionCountValue" style="width:3em;text-align:right;font-weight:bold;">100</span>
   </div>
+  <div class="row" style="margin-top:8px;align-items:center;">
+    <label for="volumeSlider" style="white-space:nowrap;">音量:</label>
+    <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1" style="flex:1">
+    <span id="volumeValue" style="width:3em;text-align:right;font-weight:bold;">100%</span>
+  </div>
   <div class="row" style="margin-top:6px">
     <div>問題: <span id="questionNum">-</span> / 100 (歌ID: <span id="cardIdSpan">-</span>)</div>
     <div>現在の状態: <b id="roundStatus">待機中</b></div>
@@ -280,6 +285,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   let currentAudio = null;
   let totalQuestions = 100;
   let roundTimer = null;
+  let volume = 1.0;
 
   function broadcast(obj){
     conns.forEach(c => { if(c.open) c.send(obj); });
@@ -336,6 +342,7 @@ button,input,select{font-size:16px;padding:8px 10px}
         
         const audioFile = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3, '0')}A.mp3` : `./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`;
         const audioB = new Audio(audioFile);
+        audioB.volume = volume;
         currentAudio = audioB;
         
         broadcast({ type: "roundResult", winner, norm, raw, correct: true, key, cardId: currentCardId });
@@ -508,6 +515,12 @@ button,input,select{font-size:16px;padding:8px 10px}
       const questionCountValue = $("questionCountValue");
       questionCountSlider.oninput = () => {
         questionCountValue.textContent = questionCountSlider.value;
+      };
+      const volumeSlider = $("volumeSlider");
+      const volumeValue = $("volumeValue");
+      volumeSlider.oninput = () => {
+        volume = parseFloat(volumeSlider.value);
+        volumeValue.textContent = `${Math.round(volume * 100)}%`;
       };
       const statusEl = $("roundStatus");
       statusEl.textContent = "データ準備中...";
@@ -830,6 +843,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       
       const audioFile = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3,'0')}B.mp3` : `./sounds/I-${String(currentCardId).padStart(3,'0')}A.mp3`;
       const audioA = new Audio(audioFile);
+      audioA.volume = volume;
       currentAudio = audioA;
 
       audioA.onended = () => {
@@ -849,6 +863,7 @@ button,input,select{font-size:16px;padding:8px 10px}
 
           const audioFileB = isReverseMode ? `./sounds/I-${String(currentCardId).padStart(3, '0')}A.mp3` : `./sounds/I-${String(currentCardId).padStart(3, '0')}B.mp3`;
           const audioB = new Audio(audioFileB);
+          audioB.volume = volume;
           currentAudio = audioB;
           audioB.onended = scheduleNextRound;
           audioB.play();
