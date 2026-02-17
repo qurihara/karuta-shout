@@ -150,9 +150,19 @@ button,input,select{font-size:16px;padding:8px 10px}
     <input type="checkbox" id="bgmMode" name="bgmMode">
     <label for="bgmMode">作業BGMモード（次の歌まで0秒～10分）</label>
   </div>
-  <div class="row" style="margin-top:8px;">
-    <input type="checkbox" id="reverseMode" name="reverseMode">
-    <label for="reverseMode">音声札流しモード（下の句→上の句）</label>
+  <div id="playModeRadioGroup" style="margin-top: 8px;">
+    <div class="row">
+      <input type="radio" id="normalMode" name="playMode" value="normal" checked>
+      <label for="normalMode">通常モード（上の句→下の句）</label>
+    </div>
+    <div class="row">
+      <input type="radio" id="reverseMode" name="playMode" value="reverse">
+      <label for="reverseMode">音声札流しモード（下の句→上の句）</label>
+    </div>
+    <div class="row">
+      <input type="radio" id="randomMode" name="playMode" value="random">
+      <label for="randomMode">ランダムモード</label>
+    </div>
   </div>
   <div class="row" style="margin-top:8px;align-items:center;">
     <label for="questionCount" style="white-space:nowrap;">問題数:</label>
@@ -218,6 +228,7 @@ button,input,select{font-size:16px;padding:8px 10px}
   let kamiKimarijiList = [];
   let kimarijiList = [];
   let animalNames = [];
+  let playMode = 'normal';
   let isReverseMode = false;
   // ★★★ gooラボのひらがな化APIを使用するために、ご自身のAPP IDを設定してください ★★★
   const GOO_APP_ID = "YOUR_GOO_LAB_APP_ID"; 
@@ -405,7 +416,7 @@ button,input,select{font-size:16px;padding:8px 10px}
     $("nextRound").style.display = "none";
     $("startGame").style.display = "inline-block";
     $("questionCount").disabled = false;
-    $("reverseMode").disabled = false;
+    document.querySelectorAll('input[name="playMode"]').forEach(rb => rb.disabled = false);
     gameInProgress = false;
     broadcast({ type: "gameOver", champions });
   }
@@ -663,10 +674,12 @@ button,input,select{font-size:16px;padding:8px 10px}
               log(`[player] My nickname is ${msg.name}`);
             }
             if (msg && msg.type === "gameStart") {
-              isReverseMode = msg.reverse;
-              log(`[player] Game starting. 音声札流しモード=${isReverseMode}`);
+              playMode = msg.playMode;
+              log(`[player] Game starting. Play mode=${playMode}`);
             }
             if(msg && msg.type==="round"){
+              isReverseMode = msg.reverse;
+              log(`[player] Round starting. reverse=${isReverseMode}`);
               setAnswerEnabled(true);
               $("textInput").focus();
               if (recognition) {
@@ -742,9 +755,9 @@ button,input,select{font-size:16px;padding:8px 10px}
     if (role !== "host" || gameInProgress) return;
     gameInProgress = true;
     totalQuestions = parseInt($("questionCount").value, 10);
-    isReverseMode = $("reverseMode").checked;
+    playMode = document.querySelector('input[name="playMode"]:checked').value;
     $("questionCount").disabled = true;
-    $("reverseMode").disabled = true;
+    document.querySelectorAll('input[name="playMode"]').forEach(rb => rb.disabled = true);
 
     let allIds = Array.from({length: 100}, (_, i) => i + 1);
     for (let i = allIds.length - 1; i > 0; i--) {
@@ -752,12 +765,12 @@ button,input,select{font-size:16px;padding:8px 10px}
         [allIds[i], allIds[j]] = [allIds[j], allIds[i]];
     }
     questionIds = allIds.slice(0, totalQuestions);
-    log(`[host] Game started with ${totalQuestions} questions. 音声札流しモード: ${isReverseMode}`);
+    log(`[host] Game started with ${totalQuestions} questions. Play mode: ${playMode}`);
     currentQuestionIndex = -1;
     playerInfo.forEach((info, key) => info.score = 0);
     updateScoreboard();
 
-    broadcast({ type: 'gameStart', reverse: isReverseMode });
+    broadcast({ type: 'gameStart', playMode: playMode });
 
     $("startGame").style.display = "none";
     $("nextRound").style.display = "inline-block";
@@ -770,6 +783,15 @@ button,input,select{font-size:16px;padding:8px 10px}
     if (role !== "host") return;
     currentQuestionIndex++;
     currentCardId = questionIds[currentQuestionIndex];
+
+    if (playMode === 'normal') {
+      isReverseMode = false;
+    } else if (playMode === 'reverse') {
+      isReverseMode = true;
+    } else { // random
+      isReverseMode = Math.random() < 0.5;
+    }
+    log(`[host] Current round reverse mode: ${isReverseMode}`);
     
     const kami = kamiKimarijiList[currentCardId];
     const shimo = kimarijiList[currentCardId];
@@ -834,7 +856,7 @@ button,input,select{font-size:16px;padding:8px 10px}
       };
 
       audioA.play();
-      broadcast({type:"round"});
+      broadcast({type:"round", reverse: isReverseMode});
       $("roundStatus").textContent = "回答受付中";
       log("[host] audio played, round opened");
       $("nextRound").disabled = false;
